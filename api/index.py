@@ -5,7 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlmodel import Session, select
 
-from api.database import get_session, init_db
+from api.database import (
+    get_local_now,
+    get_session,
+    init_db,
+    process_due_fixed_expenses,
+)
 from api.models import (
     AuthResponse,
     FixedExpense,
@@ -33,7 +38,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="PWA Finanzas API", version="2.0", lifespan=lifespan)
+app = FastAPI(title="PWA Finanzas API", version="2.1", lifespan=lifespan)
 
 # Inicializar esquema también al importar para entornos serverless sin ciclo lifespan completo
 try:
@@ -94,14 +99,14 @@ def register_user(user_in: UserCreate, session: Session = Depends(get_session)):
     # Si es el primer usuario creado tras la migración, asociarle registros previos sin user_id
     if is_first_user and db_user.id is not None:
         session.exec(
-            text("UPDATE transactions SET user_id = :uid WHERE user_id IS NULL").bindparams(
-                uid=db_user.id
-            )
+            text(
+                "UPDATE transactions SET user_id = :uid WHERE user_id IS NULL"
+            ).bindparams(uid=db_user.id)
         )
         session.exec(
-            text("UPDATE fixed_expenses SET user_id = :uid WHERE user_id IS NULL").bindparams(
-                uid=db_user.id
-            )
+            text(
+                "UPDATE fixed_expenses SET user_id = :uid WHERE user_id IS NULL"
+            ).bindparams(uid=db_user.id)
         )
         session.commit()
 
@@ -141,6 +146,9 @@ def get_transactions(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
+    # Procesar automáticamente gastos fijos vencidos del usuario antes de listar
+    process_due_fixed_expenses(session, user_id=current_user.id)
+
     transactions = session.exec(
         select(Transaction)
         .where(Transaction.user_id == current_user.id)
@@ -218,6 +226,9 @@ def get_fixed_expenses(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
+    # Asegurar que cualquier gasto fijo vencido este mes ya esté procesado
+    process_due_fixed_expenses(session, user_id=current_user.id)
+
     expenses = session.exec(
         select(FixedExpense)
         .where(FixedExpense.user_id == current_user.id)
@@ -240,6 +251,10 @@ def create_fixed_expense(
     db_expense.user_id = current_user.id
     session.add(db_expense)
     session.commit()
+    session.refresh(db_expense)
+
+    # Si el día de cobro ya llegó o pasó en este mes, cobrarlo automáticamente de inmediato
+    process_due_fixed_expenses(session, user_id=current_user.id)
     session.refresh(db_expense)
     return db_expense
 
@@ -264,8 +279,65 @@ def update_fixed_expense(
 
     session.add(db_expense)
     session.commit()
+
+    # Reevaluar por si se activó o cambió su día a uno ya vencido este mes
+    process_due_fixed_expenses(session, user_id=current_user.id)
     session.refresh(db_expense)
     return db_expense
+
+
+@app.post(
+    "/api/fixed-expenses/{expense_id}/charge-now",
+    response_model=Transaction,
+    status_code=status.HTTP_201_CREATED,
+)
+def charge_fixed_expense_now(
+    expense_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Permite adelantar el cobro del mes actual antes de que llegue el due_day sin duplicarlo después."""
+    db_expense = session.get(FixedExpense, expense_id)
+    if not db_expense or db_expense.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gasto fijo no encontrado.",
+        )
+
+    now = session.exec(
+        text("SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'America/Mexico_City'):: timestamp")
+    ).scalar() or get_local_now()
+    current_period = now.strftime("%Y-%m")
+
+    existing_tx = session.exec(
+        select(Transaction).where(
+            Transaction.fixed_expense_id == db_expense.id,
+            Transaction.billing_period == current_period,
+        )
+    ).first()
+    if existing_tx or db_expense.last_charged_period == current_period:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este gasto fijo ya fue cobrado en el mes actual.",
+        )
+
+    new_tx = Transaction(
+        type="expense",
+        amount=db_expense.amount,
+        category=db_expense.category or "Gasto Fijo",
+        description=f"Cobro automático: {db_expense.name}",
+        date=now,
+        created_at=now,
+        user_id=current_user.id,
+        fixed_expense_id=db_expense.id,
+        billing_period=current_period,
+    )
+    db_expense.last_charged_period = current_period
+    session.add(new_tx)
+    session.add(db_expense)
+    session.commit()
+    session.refresh(new_tx)
+    return new_tx
 
 
 @app.delete(
@@ -287,3 +359,13 @@ def delete_fixed_expense(
     session.delete(db_expense)
     session.commit()
     return None
+
+
+# --- CRON / PROCESAMIENTO GLOBAL DE GASTOS FIJOS ---
+@app.get("/api/cron/process-fixed-expenses")
+def cron_process_fixed_expenses(session: Session = Depends(get_session)):
+    """Endpoint para ejecutar el procesamiento global de gastos fijos vencidos."""
+    processed_count = process_due_fixed_expenses(session, user_id=None)
+    return {
+        "processed_count": processed_count,
+    }

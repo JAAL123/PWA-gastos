@@ -23,6 +23,11 @@ export default function FixedExpensesSection({
   });
   const [actionLoadingId, setActionLoadingId] = useState(null);
 
+  const now = new Date();
+  const currentPeriod = `${now.getFullYear()}-${String(
+    now.getMonth() + 1
+  ).padStart(2, "0")}`;
+
   const handleCreate = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -115,18 +120,12 @@ export default function FixedExpensesSection({
     }
   };
 
-  const handleRecordPayment = async (expense) => {
+  const handleAdvancePayment = async (expense) => {
     setActionLoadingId(expense.id);
     setError("");
     try {
-      await fetchApi("/api/transactions", {
+      await fetchApi(`/api/fixed-expenses/${expense.id}/charge-now`, {
         method: "POST",
-        body: JSON.stringify({
-          type: "expense",
-          amount: Number(expense.amount),
-          category: expense.category || "Gasto Fijo",
-          description: `Pago fijo: ${expense.name}`,
-        }),
       });
       if (onTransactionRecorded) onTransactionRecorded();
     } catch (err) {
@@ -138,6 +137,16 @@ export default function FixedExpensesSection({
 
   return (
     <div className="space-y-6">
+      {/* Aviso de cobro automático */}
+      <div className="bg-indigo-50 border border-indigo-100 text-indigo-800 px-4 py-3 rounded-2xl text-xs flex items-center gap-2.5">
+        <span className="text-base">⚡</span>
+        <p>
+          <strong>Cobro automático activo:</strong> Los gastos fijos activos se
+          registran automáticamente en tus movimientos al llegar su día de pago
+          cada mes (una sola vez por periodo <code className="font-mono">{currentPeriod}</code>).
+        </p>
+      </div>
+
       {/* Formulario de nuevo gasto fijo */}
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h3 className="text-base font-bold text-gray-800 mb-4">
@@ -186,7 +195,7 @@ export default function FixedExpensesSection({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600 mb-1">
-                Día de Pago (1 - 31)
+                Día de Cobro Automático (1 - 31)
               </label>
               <input
                 type="number"
@@ -245,6 +254,9 @@ export default function FixedExpensesSection({
             {fixedExpenses.map((item) => {
               const isEditing = editingId === item.id;
               const isBusy = actionLoadingId === item.id;
+              const isChargedThisMonth =
+                item.last_charged_period &&
+                item.last_charged_period >= currentPeriod;
 
               if (isEditing) {
                 return (
@@ -321,7 +333,7 @@ export default function FixedExpensesSection({
                   }`}
                 >
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <p className="font-semibold text-gray-800 text-sm">
                         {item.name}
                       </p>
@@ -334,6 +346,17 @@ export default function FixedExpensesSection({
                       >
                         {item.is_active ? "Activo" : "Pausado"}
                       </span>
+                      {isChargedThisMonth ? (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
+                          ✓ Cobrado este mes ({item.last_charged_period})
+                        </span>
+                      ) : (
+                        item.is_active && (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">
+                            ⏳ Se cobra el día {item.due_day}
+                          </span>
+                        )
+                      )}
                     </div>
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-xs text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md font-medium">
@@ -351,15 +374,15 @@ export default function FixedExpensesSection({
                     </span>
 
                     <div className="flex items-center gap-1.5">
-                      {item.is_active && (
+                      {item.is_active && !isChargedThisMonth && (
                         <button
                           type="button"
                           disabled={isBusy}
-                          onClick={() => handleRecordPayment(item)}
-                          title="Registrar pago en el historial de movimientos"
+                          onClick={() => handleAdvancePayment(item)}
+                          title="Adelantar el cobro de este mes ahora (no se volverá a cobrar el día programado)"
                           className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-lg text-xs font-medium transition"
                         >
-                          + Pagar
+                          Adelantar cobro
                         </button>
                       )}
                       <button

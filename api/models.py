@@ -48,6 +48,10 @@ class Transaction(TransactionBase, table=True):
     __tablename__ = "transactions"
     id: int | None = Field(default=None, primary_key=True)
     user_id: int | None = Field(default=None, foreign_key="users.id", index=True)
+    fixed_expense_id: int | None = Field(
+        default=None, foreign_key="fixed_expenses.id", index=True
+    )
+    billing_period: str | None = Field(default=None, max_length=7)
     created_at: datetime | None = Field(default_factory=datetime.now)
 
 
@@ -76,6 +80,7 @@ class FixedExpense(FixedExpenseBase, table=True):
     __tablename__ = "fixed_expenses"
     id: int | None = Field(default=None, primary_key=True)
     user_id: int | None = Field(default=None, foreign_key="users.id", index=True)
+    last_charged_period: str | None = Field(default=None, max_length=7)
     created_at: datetime | None = Field(default_factory=datetime.utcnow)
 
 

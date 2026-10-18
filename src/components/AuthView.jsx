@@ -54,7 +54,7 @@ export default function AuthView({ onAuthenticated }) {
   };
 
   return (
-    <div className="bg-white p-7 rounded-2xl shadow-sm border border-gray-100 max-w-md mx-auto my-6">
+    <div className="bg-white p-7 rounded-2xl shadow-sm border border-gray-100 w-full max-w-md mx-auto">
       {/* Selector de modo */}
       <div className="grid grid-cols-2 bg-gray-100 p-1 rounded-xl mb-6">
         <button
