@@ -1,19 +1,49 @@
-from fastapi import Depends, FastAPI
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from sqlmodel import Session, select
 
-from api.database import get_session
-from api.models import FixedExpense, FixedExpenseCreate, Transaction, TransactionCreate
-from api.security import verify_token
+from api.database import get_session, init_db
+from api.models import (
+    AuthResponse,
+    FixedExpense,
+    FixedExpenseCreate,
+    FixedExpenseUpdate,
+    Transaction,
+    TransactionCreate,
+    TransactionUpdate,
+    User,
+    UserCreate,
+    UserLogin,
+    UserPublic,
+)
+from api.security import (
+    create_access_token,
+    get_current_user,
+    hash_password,
+    verify_password,
+)
 
-app = FastAPI(title="PWA Finanzas API", version="1.0")
 
-# Configurar CORS para permitir peticiones desde tu frontend (local y producción)
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="PWA Finanzas API", version="2.0", lifespan=lifespan)
+
+# Inicializar esquema también al importar para entornos serverless sin ciclo lifespan completo
+try:
+    init_db()
+except Exception as exc:
+    print(f"WARN - No se pudo inicializar DB al arrancar: {exc}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "*"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -25,14 +55,96 @@ def read_root():
     return {"message": "api Running successfully"}
 
 
-@app.get(
-    "/api/transactions",
-    response_model=list[Transaction],
-    dependencies=[Depends(verify_token)],
+# --- AUTENTICACIÓN ---
+@app.post(
+    "/api/auth/register",
+    response_model=AuthResponse,
+    status_code=status.HTTP_201_CREATED,
 )
-def get_transactions(session: Session = Depends(get_session)):
+def register_user(user_in: UserCreate, session: Session = Depends(get_session)):
+    username = user_in.username.strip().lower()
+    if len(username) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El nombre de usuario debe tener al menos 3 caracteres.",
+        )
+    if len(user_in.password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La contraseña debe tener al menos 6 caracteres.",
+        )
+
+    existing = session.exec(select(User).where(User.username == username)).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ese nombre de usuario ya está registrado.",
+        )
+
+    is_first_user = session.exec(select(User)).first() is None
+
+    db_user = User(
+        username=username,
+        password_hash=hash_password(user_in.password),
+    )
+    session.add(db_user)
+    session.commit()
+    session.refresh(db_user)
+
+    # Si es el primer usuario creado tras la migración, asociarle registros previos sin user_id
+    if is_first_user and db_user.id is not None:
+        session.exec(
+            text("UPDATE transactions SET user_id = :uid WHERE user_id IS NULL").bindparams(
+                uid=db_user.id
+            )
+        )
+        session.exec(
+            text("UPDATE fixed_expenses SET user_id = :uid WHERE user_id IS NULL").bindparams(
+                uid=db_user.id
+            )
+        )
+        session.commit()
+
+    token = create_access_token(user_id=db_user.id, username=db_user.username)
+    return AuthResponse(
+        access_token=token,
+        user=UserPublic.model_validate(db_user),
+    )
+
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+def login_user(credentials: UserLogin, session: Session = Depends(get_session)):
+    username = credentials.username.strip().lower()
+    db_user = session.exec(select(User).where(User.username == username)).first()
+
+    if not db_user or not verify_password(credentials.password, db_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario o contraseña incorrectos.",
+        )
+
+    token = create_access_token(user_id=db_user.id, username=db_user.username)
+    return AuthResponse(
+        access_token=token,
+        user=UserPublic.model_validate(db_user),
+    )
+
+
+@app.get("/api/auth/me", response_model=UserPublic)
+def get_me(current_user: User = Depends(get_current_user)):
+    return UserPublic.model_validate(current_user)
+
+
+# --- TRANSACCIONES ---
+@app.get("/api/transactions", response_model=list[Transaction])
+def get_transactions(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
     transactions = session.exec(
-        select(Transaction).order_by(Transaction.date.desc())
+        select(Transaction)
+        .where(Transaction.user_id == current_user.id)
+        .order_by(Transaction.date.desc(), Transaction.id.desc())
     ).all()
     return transactions
 
@@ -40,26 +152,76 @@ def get_transactions(session: Session = Depends(get_session)):
 @app.post(
     "/api/transactions",
     response_model=Transaction,
-    dependencies=[Depends(verify_token)],
+    status_code=status.HTTP_201_CREATED,
 )
 def create_transaction(
-    transaction_in: TransactionCreate, session: Session = Depends(get_session)
+    transaction_in: TransactionCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ):
     db_transaction = Transaction.model_validate(transaction_in)
+    db_transaction.user_id = current_user.id
     session.add(db_transaction)
     session.commit()
     session.refresh(db_transaction)
     return db_transaction
 
 
-@app.get(
-    "/api/fixed-expenses",
-    response_model=list[FixedExpense],
-    dependencies=[Depends(verify_token)],
+@app.put("/api/transactions/{transaction_id}", response_model=Transaction)
+def update_transaction(
+    transaction_id: int,
+    transaction_in: TransactionUpdate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    db_transaction = session.get(Transaction, transaction_id)
+    if not db_transaction or db_transaction.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transacción no encontrada.",
+        )
+
+    update_data = transaction_in.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_transaction, key, value)
+
+    session.add(db_transaction)
+    session.commit()
+    session.refresh(db_transaction)
+    return db_transaction
+
+
+@app.delete(
+    "/api/transactions/{transaction_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
 )
-def get_fixed_expenses(session: Session = Depends(get_session)):
+def delete_transaction(
+    transaction_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    db_transaction = session.get(Transaction, transaction_id)
+    if not db_transaction or db_transaction.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transacción no encontrada.",
+        )
+
+    session.delete(db_transaction)
+    session.commit()
+    return None
+
+
+# --- GASTOS FIJOS ---
+@app.get("/api/fixed-expenses", response_model=list[FixedExpense])
+def get_fixed_expenses(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
     expenses = session.exec(
-        select(FixedExpense).where(FixedExpense.is_active == True)
+        select(FixedExpense)
+        .where(FixedExpense.user_id == current_user.id)
+        .order_by(FixedExpense.due_day.asc(), FixedExpense.id.desc())
     ).all()
     return expenses
 
@@ -67,13 +229,61 @@ def get_fixed_expenses(session: Session = Depends(get_session)):
 @app.post(
     "/api/fixed-expenses",
     response_model=FixedExpense,
-    dependencies=[Depends(verify_token)],
+    status_code=status.HTTP_201_CREATED,
 )
 def create_fixed_expense(
-    expense_in: FixedExpenseCreate, session: Session = Depends(get_session)
+    expense_in: FixedExpenseCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ):
     db_expense = FixedExpense.model_validate(expense_in)
+    db_expense.user_id = current_user.id
     session.add(db_expense)
     session.commit()
     session.refresh(db_expense)
     return db_expense
+
+
+@app.put("/api/fixed-expenses/{expense_id}", response_model=FixedExpense)
+def update_fixed_expense(
+    expense_id: int,
+    expense_in: FixedExpenseUpdate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    db_expense = session.get(FixedExpense, expense_id)
+    if not db_expense or db_expense.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gasto fijo no encontrado.",
+        )
+
+    update_data = expense_in.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_expense, key, value)
+
+    session.add(db_expense)
+    session.commit()
+    session.refresh(db_expense)
+    return db_expense
+
+
+@app.delete(
+    "/api/fixed-expenses/{expense_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_fixed_expense(
+    expense_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    db_expense = session.get(FixedExpense, expense_id)
+    if not db_expense or db_expense.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gasto fijo no encontrado.",
+        )
+
+    session.delete(db_expense)
+    session.commit()
+    return None
