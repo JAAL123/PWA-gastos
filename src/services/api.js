@@ -5,6 +5,7 @@ const API_BASE_URL =
 
 const TOKEN_STORAGE_KEY = "pwa_auth_token";
 const USER_STORAGE_KEY = "pwa_auth_user";
+const OFFLINE_QUEUE_KEY = "pwa_offline_tx_queue";
 
 // Limpiar el antiguo token estático si existiera
 localStorage.removeItem("pwa_api_token");
@@ -34,6 +35,102 @@ export const clearSession = () => {
   localStorage.removeItem(USER_STORAGE_KEY);
 };
 
+// --- CACHÉ LOCAL Y COLA OFFLINE ---
+const getUserCacheSuffix = () => {
+  const user = getStoredUser();
+  return user?.id || user?.username || "default";
+};
+
+export const getCachedTransactions = () => {
+  try {
+    const raw = localStorage.getItem(`pwa_cache_tx_${getUserCacheSuffix()}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+export const setCachedTransactions = (list) => {
+  try {
+    localStorage.setItem(
+      `pwa_cache_tx_${getUserCacheSuffix()}`,
+      JSON.stringify(list || [])
+    );
+  } catch {
+    // Ignore storage quota errors
+  }
+};
+
+export const getCachedFixedExpenses = () => {
+  try {
+    const raw = localStorage.getItem(`pwa_cache_fixed_${getUserCacheSuffix()}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+export const setCachedFixedExpenses = (list) => {
+  try {
+    localStorage.setItem(
+      `pwa_cache_fixed_${getUserCacheSuffix()}`,
+      JSON.stringify(list || [])
+    );
+  } catch {
+    // Ignore storage quota errors
+  }
+};
+
+export const getOfflineQueue = () => {
+  try {
+    const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
+    const all = raw ? JSON.parse(raw) : [];
+    const suffix = String(getUserCacheSuffix());
+    return all.filter((item) => String(item.user_key) === suffix);
+  } catch {
+    return [];
+  }
+};
+
+const saveFullOfflineQueue = (allItems) => {
+  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(allItems));
+};
+
+export const enqueueOfflineTransaction = (payload) => {
+  let all;
+  try {
+    const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
+    all = raw ? JSON.parse(raw) : [];
+  } catch {
+    all = [];
+  }
+
+  const entry = {
+    id: `offline-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    user_key: String(getUserCacheSuffix()),
+    type: payload.type,
+    amount: Number(payload.amount),
+    category: payload.category || "General",
+    description: payload.description || "",
+    date: new Date().toISOString(),
+    is_offline_pending: true,
+  };
+
+  all.unshift(entry);
+  saveFullOfflineQueue(all);
+  return entry;
+};
+
+export const removeOfflineQueueItem = (entryId) => {
+  try {
+    const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
+    const all = raw ? JSON.parse(raw) : [];
+    saveFullOfflineQueue(all.filter((item) => item.id !== entryId));
+  } catch {
+    // Ignore
+  }
+};
+
 // Función genérica para hacer peticiones autenticadas al backend
 export async function fetchApi(endpoint, options = {}) {
   const token = getToken();
@@ -44,10 +141,20 @@ export async function fetchApi(endpoint, options = {}) {
     ...options.headers,
   };
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers,
+    });
+  } catch (networkErr) {
+    const err = new Error(
+      "Sin conexión con el servidor. Verifica tu internet."
+    );
+    err.isNetworkError = true;
+    err.cause = networkErr;
+    throw err;
+  }
 
   const text = await response.text();
   let data = null;
@@ -61,7 +168,8 @@ export async function fetchApi(endpoint, options = {}) {
 
   if (response.status === 401 || response.status === 403) {
     const detail =
-      data?.detail || "Sesión expirada o credenciales inválidas. Inicia sesión nuevamente.";
+      data?.detail ||
+      "Sesión expirada o credenciales inválidas. Inicia sesión nuevamente.";
     const error = new Error(detail);
     error.status = response.status;
     throw error;
@@ -78,6 +186,34 @@ export async function fetchApi(endpoint, options = {}) {
   }
 
   return data;
+}
+
+export async function syncOfflineTransactions() {
+  if (!navigator.onLine || !getToken()) return 0;
+  const queue = getOfflineQueue();
+  if (queue.length === 0) return 0;
+
+  let syncedCount = 0;
+  // Enviar en orden cronológico (del más antiguo al más reciente)
+  for (const item of [...queue].reverse()) {
+    try {
+      await fetchApi("/api/transactions", {
+        method: "POST",
+        body: JSON.stringify({
+          type: item.type,
+          amount: item.amount,
+          category: item.category,
+          description: item.description,
+          date: item.date,
+        }),
+      });
+      removeOfflineQueueItem(item.id);
+      syncedCount += 1;
+    } catch (err) {
+      if (err.isNetworkError) break;
+    }
+  }
+  return syncedCount;
 }
 
 export async function loginUser(username, password) {

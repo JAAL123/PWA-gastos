@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fetchApi } from "../services/api";
+import { enqueueOfflineTransaction, fetchApi } from "../services/api";
 
 export default function TransactionForm({ onTransactionAdded }) {
   const [description, setDescription] = useState("");
@@ -14,31 +14,52 @@ export default function TransactionForm({ onTransactionAdded }) {
     setLoading(true);
     setError("");
 
+    const payload = {
+      description: description.trim(),
+      amount: parseFloat(amount),
+      type,
+      category: category.trim() || "General",
+    };
+
     try {
+      if (!navigator.onLine) {
+        enqueueOfflineTransaction(payload);
+        setDescription("");
+        setAmount("");
+        if (onTransactionAdded) onTransactionAdded({ queuedOffline: true });
+        return;
+      }
+
       await fetchApi("/api/transactions", {
         method: "POST",
-        body: JSON.stringify({
-          description,
-          amount: parseFloat(amount),
-          type,
-          category,
-        }),
+        body: JSON.stringify(payload),
       });
 
-      // Limpiar formulario y notificar al componente padre para recargar la lista
       setDescription("");
       setAmount("");
-      if (onTransactionAdded) onTransactionAdded();
+      if (onTransactionAdded) onTransactionAdded({ queuedOffline: false });
     } catch (err) {
-      setError(err.message);
+      if (err.isNetworkError) {
+        enqueueOfflineTransaction(payload);
+        setDescription("");
+        setAmount("");
+        if (onTransactionAdded) onTransactionAdded({ queuedOffline: true });
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-6">
-      <h3 className="text-md font-bold text-gray-800 mb-4">Nueva Transacción</h3>
+    <div
+      id="transaction-form-card"
+      className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-6"
+    >
+      <h3 className="text-base font-bold text-gray-800 mb-4">
+        Nueva Transacción
+      </h3>
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-600 text-xs p-3 rounded-xl mb-4 text-center">
@@ -55,7 +76,7 @@ export default function TransactionForm({ onTransactionAdded }) {
             <select
               value={type}
               onChange={(e) => setType(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm bg-white"
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm bg-white"
             >
               <option value="expense">Gasto 🔴</option>
               <option value="income">Ingreso 🟢</option>
@@ -69,10 +90,12 @@ export default function TransactionForm({ onTransactionAdded }) {
             <input
               type="number"
               step="0.01"
+              min="0.01"
+              inputMode="decimal"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.00"
-              className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
               required
             />
           </div>
@@ -87,7 +110,7 @@ export default function TransactionForm({ onTransactionAdded }) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Ej: Supermercado, Salario, etc."
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
+            className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
             required
           />
         </div>
@@ -101,14 +124,14 @@ export default function TransactionForm({ onTransactionAdded }) {
             value={category}
             onChange={(e) => setCategory(e.target.value)}
             placeholder="Ej: Comida, Transporte, Ocio"
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
+            className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
           />
         </div>
 
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-xl transition duration-200 shadow-sm text-sm disabled:opacity-50"
+          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 px-4 rounded-xl transition duration-200 shadow-sm text-sm disabled:opacity-50"
         >
           {loading ? "Guardando..." : "Registrar Transacción"}
         </button>

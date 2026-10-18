@@ -19,8 +19,22 @@
       "dest": "api/index.py"
     },
     {
-      "src": "/assets/(.*)",
-      "dest": "/assets/$1"
+      "src": "/sw.js",
+      "headers": {
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        "Service-Worker-Allowed": "/"
+      },
+      "dest": "/sw.js"
+    },
+    {
+      "src": "/manifest.webmanifest",
+      "headers": {
+        "Content-Type": "application/manifest+json; charset=utf-8"
+      },
+      "dest": "/manifest.webmanifest"
+    },
+    {
+      "handle": "filesystem"
     },
     {
       "src": "/(.*)",

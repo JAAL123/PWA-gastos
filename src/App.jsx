@@ -2,22 +2,41 @@ import { useState, useEffect, useCallback } from "react";
 import AuthView from "./components/AuthView";
 import BalanceSummary from "./components/BalanceSummary";
 import FixedExpensesSection from "./components/FixedExpensesSection";
+import InstallPwaPrompt from "./components/InstallPwaPrompt";
 import TransactionForm from "./components/TransactionForm";
 import {
   clearSession,
   fetchApi,
   fetchCurrentUser,
+  getCachedFixedExpenses,
+  getCachedTransactions,
+  getOfflineQueue,
   getStoredUser,
   getToken,
+  removeOfflineQueueItem,
+  setCachedFixedExpenses,
+  setCachedTransactions,
+  syncOfflineTransactions,
 } from "./services/api";
 
 export default function App() {
   const [user, setUser] = useState(() => (getToken() ? getStoredUser() : null));
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!getToken());
   const [activeTab, setActiveTab] = useState("transactions"); // 'transactions' | 'fixed'
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator !== "undefined" ? navigator.onLine : true
+  );
 
-  const [transactions, setTransactions] = useState([]);
-  const [fixedExpenses, setFixedExpenses] = useState([]);
+  const [transactions, setTransactions] = useState(() =>
+    getToken() ? getCachedTransactions() : []
+  );
+  const [fixedExpenses, setFixedExpenses] = useState(() =>
+    getToken() ? getCachedFixedExpenses() : []
+  );
+  const [offlineQueue, setOfflineQueue] = useState(() =>
+    getToken() ? getOfflineQueue() : []
+  );
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -32,12 +51,18 @@ export default function App() {
   });
   const [txActionLoadingId, setTxActionLoadingId] = useState(null);
 
+  const showTempFeedback = useCallback((msg) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(""), 3500);
+  }, []);
+
   const handleLogout = useCallback(() => {
     clearSession();
     setUser(null);
     setIsAuthenticated(false);
     setTransactions([]);
     setFixedExpenses([]);
+    setOfflineQueue([]);
     setEditingTxId(null);
   }, []);
 
@@ -47,10 +72,26 @@ export default function App() {
       return;
     }
 
+    setOfflineQueue(getOfflineQueue());
+
+    if (!navigator.onLine) {
+      setTransactions(getCachedTransactions());
+      setFixedExpenses(getCachedFixedExpenses());
+      return;
+    }
+
     setLoading(true);
     setError("");
 
     try {
+      const synced = await syncOfflineTransactions();
+      if (synced > 0) {
+        showTempFeedback(
+          `☁️ Se sincronizaron ${synced} movimiento(s) pendientes.`
+        );
+      }
+      setOfflineQueue(getOfflineQueue());
+
       const [meData, txData, fixedData] = await Promise.all([
         fetchCurrentUser(),
         fetchApi("/api/transactions"),
@@ -59,24 +100,51 @@ export default function App() {
       setUser(meData);
       setTransactions(txData || []);
       setFixedExpenses(fixedData || []);
+      setCachedTransactions(txData || []);
+      setCachedFixedExpenses(fixedData || []);
       setIsAuthenticated(true);
     } catch (err) {
       if (err.status === 401 || err.status === 403) {
         handleLogout();
+      } else if (err.isNetworkError) {
+        setTransactions(getCachedTransactions());
+        setFixedExpenses(getCachedFixedExpenses());
       } else {
         setError(err.message || "Error al cargar los datos.");
       }
     } finally {
       setLoading(false);
     }
-  }, [handleLogout]);
+  }, [handleLogout, showTempFeedback]);
+
+  // Escuchar cambios de conectividad Online / Offline
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      if (getToken()) {
+        loadDashboardData();
+      }
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [loadDashboardData]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
     let cancelled = false;
 
     async function initDashboard() {
+      if (!navigator.onLine) return;
       try {
+        await syncOfflineTransactions();
         const [meData, txData, fixedData] = await Promise.all([
           fetchCurrentUser(),
           fetchApi("/api/transactions"),
@@ -86,11 +154,14 @@ export default function App() {
         setUser(meData);
         setTransactions(txData || []);
         setFixedExpenses(fixedData || []);
+        setCachedTransactions(txData || []);
+        setCachedFixedExpenses(fixedData || []);
+        setOfflineQueue(getOfflineQueue());
       } catch (err) {
         if (cancelled) return;
         if (err.status === 401 || err.status === 403) {
           handleLogout();
-        } else {
+        } else if (!err.isNetworkError) {
           setError(err.message || "Error al cargar los datos.");
         }
       }
@@ -101,11 +172,6 @@ export default function App() {
       cancelled = true;
     };
   }, [isAuthenticated, handleLogout]);
-
-  const showTempFeedback = (msg) => {
-    setFeedback(msg);
-    setTimeout(() => setFeedback(""), 3000);
-  };
 
   const startEditingTx = (tx) => {
     setEditingTxId(tx.id);
@@ -140,11 +206,18 @@ export default function App() {
     }
   };
 
-  const handleDeleteTx = async (txId) => {
-    setTxActionLoadingId(txId);
+  const handleDeleteTx = async (tx) => {
+    if (tx.is_offline_pending) {
+      removeOfflineQueueItem(tx.id);
+      setOfflineQueue(getOfflineQueue());
+      showTempFeedback("Movimiento pendiente eliminado.");
+      return;
+    }
+
+    setTxActionLoadingId(tx.id);
     setError("");
     try {
-      await fetchApi(`/api/transactions/${txId}`, {
+      await fetchApi(`/api/transactions/${tx.id}`, {
         method: "DELETE",
       });
       await loadDashboardData();
@@ -169,6 +242,8 @@ export default function App() {
     }
   };
 
+  const combinedTransactions = [...offlineQueue, ...transactions];
+
   // Vista centrada vertical y horizontalmente cuando no ha iniciado sesión
   if (!isAuthenticated) {
     return (
@@ -183,10 +258,15 @@ export default function App() {
             </p>
           </header>
 
+          <InstallPwaPrompt />
+
           <main className="w-full">
             <AuthView
               onAuthenticated={(loggedUser) => {
                 setUser(loggedUser);
+                setTransactions(getCachedTransactions());
+                setFixedExpenses(getCachedFixedExpenses());
+                setOfflineQueue(getOfflineQueue());
                 setIsAuthenticated(true);
               }}
             />
@@ -197,12 +277,23 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen w-full bg-gray-50 text-gray-900 flex flex-col items-center py-8 px-4">
-      <header className="w-full max-w-3xl flex flex-col sm:flex-row justify-between items-center gap-4 mb-8">
+    <div className="min-h-screen w-full bg-gray-50 text-gray-900 flex flex-col items-center pt-6 pb-24 sm:py-8 px-4">
+      <header className="w-full max-w-3xl flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
         <div className="text-center sm:text-left">
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-indigo-600 tracking-tight">
-            PWA Gastos Personales
-          </h1>
+          <div className="flex items-center justify-center sm:justify-start gap-2">
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-indigo-600 tracking-tight">
+              PWA Gastos Personales
+            </h1>
+            <span
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                isOnline
+                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                  : "bg-amber-50 text-amber-700 border border-amber-200"
+              }`}
+            >
+              {isOnline ? "● En línea" : "● Offline"}
+            </span>
+          </div>
           <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
             Control financiero rápido, seguro y conectado con Supabase
           </p>
@@ -210,7 +301,9 @@ export default function App() {
 
         <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl shadow-sm border border-gray-100">
           <div className="text-right">
-            <p className="text-[11px] text-gray-400 leading-none">Sesión activa</p>
+            <p className="text-[11px] text-gray-400 leading-none">
+              Sesión activa
+            </p>
             <p className="text-sm font-bold text-gray-800">
               @{user?.username || "usuario"}
             </p>
@@ -225,9 +318,32 @@ export default function App() {
       </header>
 
       <main className="w-full max-w-3xl">
+        {/* Banner para instalar como PWA en Android, iOS o PC */}
+        <InstallPwaPrompt />
+
+        {/* Aviso de modo sin conexión o cola pendiente */}
+        {(!isOnline || offlineQueue.length > 0) && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs p-3.5 rounded-2xl mb-5 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {!isOnline
+                ? "📡 Estás sin conexión. Puedes consultar tu historial guardado y registrar nuevos movimientos (se sincronizarán al volver a conectarte)."
+                : `☁️ Tienes ${offlineQueue.length} movimiento(s) guardados sin conexión listos para sincronizar.`}
+            </span>
+            {isOnline && offlineQueue.length > 0 && (
+              <button
+                type="button"
+                onClick={loadDashboardData}
+                className="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded-lg text-xs font-bold transition"
+              >
+                Sincronizar ahora
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Resumen de Balance */}
         <BalanceSummary
-          transactions={transactions}
+          transactions={combinedTransactions}
           fixedExpenses={fixedExpenses}
         />
 
@@ -237,8 +353,8 @@ export default function App() {
           </div>
         )}
 
-        {/* Pestañas de Navegación */}
-        <div className="flex bg-gray-200/70 p-1 rounded-2xl mb-6">
+        {/* Pestañas de Navegación en Escritorio / Tablet */}
+        <div className="hidden sm:flex bg-gray-200/70 p-1 rounded-2xl mb-6">
           <button
             type="button"
             onClick={() => setActiveTab("transactions")}
@@ -248,7 +364,7 @@ export default function App() {
                 : "text-gray-600 hover:text-gray-900"
             }`}
           >
-            💸 Movimientos ({transactions.length})
+            💸 Movimientos ({combinedTransactions.length})
           </button>
           <button
             type="button"
@@ -265,7 +381,18 @@ export default function App() {
 
         {activeTab === "transactions" ? (
           <div className="space-y-6">
-            <TransactionForm onTransactionAdded={loadDashboardData} />
+            <TransactionForm
+              onTransactionAdded={(info) => {
+                if (info?.queuedOffline) {
+                  setOfflineQueue(getOfflineQueue());
+                  showTempFeedback(
+                    "Guardado en el dispositivo (se sincronizará al tener internet)."
+                  );
+                } else {
+                  loadDashboardData();
+                }
+              }}
+            />
 
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
               <div className="flex justify-between items-center mb-4">
@@ -292,7 +419,7 @@ export default function App() {
                 </div>
               )}
 
-              {!loading && !error && transactions.length === 0 && (
+              {!loading && !error && combinedTransactions.length === 0 && (
                 <div className="text-center py-8">
                   <p className="text-sm text-gray-400">
                     No hay transacciones registradas aún.
@@ -303,9 +430,9 @@ export default function App() {
                 </div>
               )}
 
-              {!loading && transactions.length > 0 && (
+              {combinedTransactions.length > 0 && (
                 <div className="divide-y divide-gray-100">
-                  {transactions.map((tx) => {
+                  {combinedTransactions.map((tx) => {
                     const isEditing = editingTxId === tx.id;
                     const isBusy = txActionLoadingId === tx.id;
 
@@ -397,6 +524,11 @@ export default function App() {
                             <p className="font-semibold text-gray-800">
                               {tx.description || "Sin descripción"}
                             </p>
+                            {tx.is_offline_pending && (
+                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                                ☁️ Pendiente de sincronizar
+                              </span>
+                            )}
                             {(tx.fixed_expense_id || tx.billing_period) && (
                               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
                                 ⚡ Cargo fijo automático
@@ -428,18 +560,20 @@ export default function App() {
                           </span>
 
                           <div className="flex items-center gap-1.5">
+                            {!tx.is_offline_pending && isOnline && (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => startEditingTx(tx)}
+                                className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1 rounded-lg text-xs font-medium transition"
+                              >
+                                Editar
+                              </button>
+                            )}
                             <button
                               type="button"
                               disabled={isBusy}
-                              onClick={() => startEditingTx(tx)}
-                              className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1 rounded-lg text-xs font-medium transition"
-                            >
-                              Editar
-                            </button>
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => handleDeleteTx(tx.id)}
+                              onClick={() => handleDeleteTx(tx)}
                               className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1 rounded-lg text-xs font-medium transition"
                             >
                               Eliminar
@@ -466,6 +600,57 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Barra de Navegación Inferior Móvil estilo App Nativa */}
+      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-200 px-4 py-2 flex justify-around items-center z-50 shadow-lg">
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab("transactions");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+          className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition ${
+            activeTab === "transactions"
+              ? "text-indigo-600 font-bold"
+              : "text-gray-400 font-medium"
+          }`}
+        >
+          <span className="text-lg leading-none">💸</span>
+          <span className="text-[11px]">Movimientos</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab("transactions");
+            setTimeout(() => {
+              document
+                .getElementById("transaction-form-card")
+                ?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 50);
+          }}
+          className="bg-indigo-600 text-white px-4 py-2 rounded-2xl text-xs font-bold shadow-sm flex items-center gap-1"
+        >
+          <span>＋</span>
+          <span>Registrar</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab("fixed");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+          className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition ${
+            activeTab === "fixed"
+              ? "text-indigo-600 font-bold"
+              : "text-gray-400 font-medium"
+          }`}
+        >
+          <span className="text-lg leading-none">📅</span>
+          <span className="text-[11px]">Gastos Fijos</span>
+        </button>
+      </nav>
     </div>
   );
 }
