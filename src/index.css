@@ -17,6 +17,17 @@ body {
   }
 }
 
+/* Evita que input[type="date"] se desborde horizontalmente en iOS Safari / WebKit */
+input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
 .pwa-safe-top {
   padding-top: max(1.5rem, env(safe-area-inset-top));
 }

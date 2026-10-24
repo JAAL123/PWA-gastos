@@ -417,9 +417,6 @@ export default function App() {
             <h1 className="text-3xl font-extrabold text-indigo-600 tracking-tight">
               Control de gastos
             </h1>
-            <p className="text-xs sm:text-sm text-gray-500 mt-1">
-              Control financiero rápido, seguro y conectado con Supabase
-            </p>
           </header>
 
           <InstallPwaPrompt />
@@ -443,12 +440,15 @@ export default function App() {
 
   return (
     <div className="min-h-screen w-full bg-gray-50 text-gray-900 flex flex-col items-center pwa-safe-top pb-28 sm:py-8 px-4">
-      <header className="w-full max-w-3xl flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
+      <header className="w-full max-w-3xl flex flex-col sm:flex-row justify-between items-center gap-3 mb-6">
         <div className="text-center sm:text-left">
-          <div className="flex items-center justify-center sm:justify-start gap-2">
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-indigo-600 tracking-tight">
-              Control de gastos
-            </h1>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-indigo-600 tracking-tight">
+            Control de gastos
+          </h1>
+        </div>
+
+        <div className="flex items-center gap-3 bg-white px-4 py-2.5 rounded-2xl shadow-sm border border-gray-100">
+          <div className="flex items-center gap-2.5">
             <span
               className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
                 isOnline
@@ -468,21 +468,17 @@ export default function App() {
                 </>
               )}
             </span>
-          </div>
-          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-            Control financiero rápido, seguro y conectado con Supabase
-          </p>
-        </div>
 
-        <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl shadow-sm border border-gray-100">
-          <div className="text-right">
-            <p className="text-[11px] text-gray-400 leading-none">
-              Sesión activa
-            </p>
-            <p className="text-sm font-bold text-gray-800">
-              @{user?.username || "usuario"}
-            </p>
+            <div className="text-left">
+              <p className="text-[10px] text-gray-400 leading-none">
+                Sesión activa
+              </p>
+              <p className="text-sm font-bold text-gray-800 leading-tight mt-0.5">
+                @{user?.username || "usuario"}
+              </p>
+            </div>
           </div>
+
           <button
             onClick={handleLogout}
             className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1.5 rounded-xl text-xs font-semibold transition duration-200 inline-flex items-center gap-1.5"
@@ -616,14 +612,14 @@ export default function App() {
               </div>
 
               {/* Barra de Filtros: Categoría, Desde (dd/mm/yyyy), Hasta (dd/mm/yyyy) */}
-              <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-100 mb-5">
+              <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-100 mb-5 overflow-hidden">
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 mb-2.5">
                   <Filter className="w-3.5 h-3.5 text-indigo-600" />
                   <span>Filtrar movimientos</span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1">
                       Categoría
                     </label>
@@ -633,7 +629,7 @@ export default function App() {
                         setFilterCategory(e.target.value);
                         setPage(1);
                       }}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-xs bg-white"
+                      className="block w-full max-w-full min-w-0 px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-xs bg-white box-border"
                     >
                       <option value="">Todas las categorías</option>
                       {categories.map((cat) => (
@@ -644,7 +640,7 @@ export default function App() {
                     </select>
                   </div>
 
-                  <div>
+                  <div className="min-w-0 overflow-hidden">
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1">
                       Desde ({isoToDdMmYyyy(filterDateFrom)})
                     </label>
@@ -658,11 +654,11 @@ export default function App() {
                           setPage(1);
                         }
                       }}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-xs bg-white"
+                      className="block w-full max-w-full min-w-0 px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-xs bg-white box-border appearance-none"
                     />
                   </div>
 
-                  <div>
+                  <div className="min-w-0 overflow-hidden">
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1">
                       Hasta ({isoToDdMmYyyy(filterDateTo)})
                     </label>
@@ -676,7 +672,7 @@ export default function App() {
                           setPage(1);
                         }
                       }}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-xs bg-white"
+                      className="block w-full max-w-full min-w-0 px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-xs bg-white box-border appearance-none"
                     />
                   </div>
                 </div>
