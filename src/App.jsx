@@ -277,7 +277,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen w-full bg-gray-50 text-gray-900 flex flex-col items-center pt-6 pb-24 sm:py-8 px-4">
+    <div className="min-h-screen w-full bg-gray-50 text-gray-900 flex flex-col items-center pwa-safe-top pb-28 sm:py-8 px-4">
       <header className="w-full max-w-3xl flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
         <div className="text-center sm:text-left">
           <div className="flex items-center justify-center sm:justify-start gap-2">
@@ -602,7 +602,7 @@ export default function App() {
       </main>
 
       {/* Barra de Navegación Inferior Móvil estilo App Nativa */}
-      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-200 px-4 py-2 flex justify-around items-center z-50 shadow-lg">
+      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-200 px-4 pt-2 pwa-safe-bottom-nav flex justify-around items-center z-50 shadow-lg">
         <button
           type="button"
           onClick={() => {

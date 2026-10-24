@@ -76,7 +76,7 @@ export default function TransactionForm({ onTransactionAdded }) {
             <select
               value={type}
               onChange={(e) => setType(e.target.value)}
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm bg-white"
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-sm bg-white"
             >
               <option value="expense">Gasto 🔴</option>
               <option value="income">Ingreso 🟢</option>
@@ -95,7 +95,7 @@ export default function TransactionForm({ onTransactionAdded }) {
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.00"
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-sm"
               required
             />
           </div>
@@ -110,7 +110,7 @@ export default function TransactionForm({ onTransactionAdded }) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Ej: Supermercado, Salario, etc."
-            className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
+            className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-sm"
             required
           />
         </div>
@@ -124,7 +124,7 @@ export default function TransactionForm({ onTransactionAdded }) {
             value={category}
             onChange={(e) => setCategory(e.target.value)}
             placeholder="Ej: Comida, Transporte, Ocio"
-            className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
+            className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-sm"
           />
         </div>
 

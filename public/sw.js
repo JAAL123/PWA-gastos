@@ -1,4 +1,4 @@
-const CACHE_NAME = "pwa-gastos-v2";
+const CACHE_NAME = "pwa-gastos-v3";
 const APP_SHELL = [
   "/",
   "/index.html",
