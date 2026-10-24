@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Smartphone, Download, Share, X } from "lucide-react";
 
 const getInitialStandalone = () =>
   typeof window !== "undefined" &&
@@ -60,12 +61,12 @@ export default function InstallPwaPrompt() {
     <div className="w-full mb-5">
       <div className="bg-gradient-to-r from-indigo-600 to-indigo-500 text-white px-4 py-3 rounded-2xl shadow-sm flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center text-lg shrink-0">
-            📲
+          <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+            <Smartphone className="w-5 h-5 text-white" />
           </div>
           <div>
             <p className="text-xs sm:text-sm font-bold leading-tight">
-              Instala Mis Gastos en tu dispositivo
+              Instala Control de gastos en tu dispositivo
             </p>
             <p className="text-[11px] text-indigo-100 mt-0.5">
               Acceso directo en pantalla de inicio y modo sin conexión
@@ -77,17 +78,18 @@ export default function InstallPwaPrompt() {
           <button
             type="button"
             onClick={handleInstallClick}
-            className="bg-white text-indigo-600 hover:bg-indigo-50 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-xs"
+            className="bg-white text-indigo-600 hover:bg-indigo-50 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-xs inline-flex items-center gap-1.5"
           >
-            {isIos ? "Cómo instalar" : "Instalar App"}
+            <Download className="w-3.5 h-3.5" />
+            <span>{isIos ? "Cómo instalar" : "Instalar App"}</span>
           </button>
           <button
             type="button"
             onClick={() => setDismissed(true)}
             aria-label="Cerrar aviso de instalación"
-            className="text-indigo-200 hover:text-white px-2 py-1 text-xs font-bold"
+            className="text-indigo-200 hover:text-white p-1"
           >
-            ✕
+            <X className="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -97,9 +99,12 @@ export default function InstallPwaPrompt() {
           <p className="font-bold text-indigo-600">
             Para instalar en iPhone o iPad desde Safari:
           </p>
-          <p>
-            1. Toca el ícono <strong>Compartir (⬆️)</strong> en la barra del
-            navegador.
+          <p className="flex items-center gap-1.5">
+            <span>1. Toca el ícono</span>
+            <strong className="inline-flex items-center gap-1">
+              Compartir <Share className="w-3.5 h-3.5 inline text-indigo-600" />
+            </strong>
+            <span>en la barra del navegador.</span>
           </p>
           <p>
             2. Desliza hacia abajo y selecciona{" "}

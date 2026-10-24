@@ -94,3 +94,15 @@ class FixedExpenseUpdate(SQLModel):
     due_day: int | None = None
     category: str | None = None
     is_active: bool | None = None
+
+
+# --- CATEGORÍAS ---
+class CategoryBase(SQLModel):
+    name: str = Field(index=True, unique=True, max_length=60)
+    is_active: bool = True
+
+
+class Category(CategoryBase, table=True):
+    __tablename__ = "categories"
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime | None = Field(default_factory=datetime.utcnow)

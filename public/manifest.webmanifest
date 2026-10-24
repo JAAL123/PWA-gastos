@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "PWA Gastos Personales",
-  "short_name": "Mis Gastos",
+  "name": "Control de gastos",
+  "short_name": "Control de gastos",
   "description": "Control financiero personal rápido, seguro, con soporte offline y conectado con Supabase.",
   "start_url": "/",
   "scope": "/",

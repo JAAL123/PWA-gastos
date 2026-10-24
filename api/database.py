@@ -156,17 +156,35 @@ def init_db():
             )
         )
 
+        # Sembrar las categorías base si aún no existen en la tabla categories
+        conn.execute(
+            text(
+                """
+                INSERT INTO categories (name, is_active, created_at)
+                VALUES
+                    ('General', TRUE, NOW()),
+                    ('Comida', TRUE, NOW()),
+                    ('PC', TRUE, NOW()),
+                    ('Ropa', TRUE, NOW()),
+                    ('Movil', TRUE, NOW()),
+                    ('Tarjeta', TRUE, NOW())
+                ON CONFLICT (name) DO NOTHING;
+                """
+            )
+        )
+
         # Activar Row Level Security (RLS) y bloquear acceso desde la Data API pública (anon/authenticated)
         # El backend FastAPI conecta con el rol propietario (postgres), que ignora RLS y mantiene acceso total.
         conn.execute(text("ALTER TABLE users ENABLE ROW LEVEL SECURITY;"))
         conn.execute(text("ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;"))
         conn.execute(text("ALTER TABLE fixed_expenses ENABLE ROW LEVEL SECURITY;"))
+        conn.execute(text("ALTER TABLE categories ENABLE ROW LEVEL SECURITY;"))
         conn.execute(
             text(
                 """
                 DO $$
                 BEGIN
-                    REVOKE ALL ON TABLE public.users, public.transactions, public.fixed_expenses FROM anon, authenticated;
+                    REVOKE ALL ON TABLE public.users, public.transactions, public.fixed_expenses, public.categories FROM anon, authenticated;
                 EXCEPTION
                     WHEN OTHERS THEN
                         NULL;

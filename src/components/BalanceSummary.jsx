@@ -1,3 +1,5 @@
+import { Wallet, TrendingUp, TrendingDown } from "lucide-react";
+
 export default function BalanceSummary({ transactions = [], fixedExpenses = [] }) {
   const totalIncome = transactions
     .filter((tx) => tx.type === "income")
@@ -23,9 +25,12 @@ export default function BalanceSummary({ transactions = [], fixedExpenses = [] }
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
       {/* Balance Neto */}
       <div className="bg-indigo-600 text-white p-5 rounded-2xl shadow-sm flex flex-col justify-between">
-        <span className="text-xs uppercase tracking-wider font-semibold text-indigo-100">
-          Balance Neto
-        </span>
+        <div className="flex items-center justify-between">
+          <span className="text-xs uppercase tracking-wider font-semibold text-indigo-100">
+            Balance Neto
+          </span>
+          <Wallet className="w-4 h-4 text-indigo-200" />
+        </div>
         <p className="text-2xl font-extrabold mt-2">
           {netBalance < 0 ? "-" : ""}${formatMoney(Math.abs(netBalance))}
         </p>
@@ -36,9 +41,12 @@ export default function BalanceSummary({ transactions = [], fixedExpenses = [] }
 
       {/* Total Ingresos */}
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between">
-        <span className="text-xs uppercase tracking-wider font-semibold text-gray-400">
-          Ingresos Totales
-        </span>
+        <div className="flex items-center justify-between">
+          <span className="text-xs uppercase tracking-wider font-semibold text-gray-400">
+            Ingresos Totales
+          </span>
+          <TrendingUp className="w-4 h-4 text-emerald-500" />
+        </div>
         <p className="text-2xl font-extrabold text-emerald-600 mt-2">
           +${formatMoney(totalIncome)}
         </p>
@@ -49,9 +57,12 @@ export default function BalanceSummary({ transactions = [], fixedExpenses = [] }
 
       {/* Total Gastos */}
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between">
-        <span className="text-xs uppercase tracking-wider font-semibold text-gray-400">
-          Gastos Totales
-        </span>
+        <div className="flex items-center justify-between">
+          <span className="text-xs uppercase tracking-wider font-semibold text-gray-400">
+            Gastos Totales
+          </span>
+          <TrendingDown className="w-4 h-4 text-rose-500" />
+        </div>
         <p className="text-2xl font-extrabold text-rose-600 mt-2">
           -${formatMoney(totalExpense)}
         </p>

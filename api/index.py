@@ -13,6 +13,7 @@ from api.database import (
 )
 from api.models import (
     AuthResponse,
+    Category,
     FixedExpense,
     FixedExpenseCreate,
     FixedExpenseUpdate,
@@ -138,6 +139,21 @@ def login_user(credentials: UserLogin, session: Session = Depends(get_session)):
 @app.get("/api/auth/me", response_model=UserPublic)
 def get_me(current_user: User = Depends(get_current_user)):
     return UserPublic.model_validate(current_user)
+
+
+# --- CATEGORÍAS ---
+@app.get("/api/categories", response_model=list[Category])
+def get_categories(
+    _current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    categories = session.exec(
+        select(Category)
+        .where(Category.is_active == True)  # noqa: E712
+        .order_by(Category.id.asc())
+    ).all()
+    return categories
+
 
 
 # --- TRANSACCIONES ---

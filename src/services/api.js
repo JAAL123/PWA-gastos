@@ -81,6 +81,37 @@ export const setCachedFixedExpenses = (list) => {
   }
 };
 
+export const DEFAULT_CATEGORIES = [
+  { id: 1, name: "General" },
+  { id: 2, name: "Comida" },
+  { id: 3, name: "PC" },
+  { id: 4, name: "Ropa" },
+  { id: 5, name: "Movil" },
+  { id: 6, name: "Tarjeta" },
+];
+
+export const getCachedCategories = () => {
+  try {
+    const raw = localStorage.getItem("pwa_cache_categories");
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) && parsed.length > 0
+      ? parsed
+      : DEFAULT_CATEGORIES;
+  } catch {
+    return DEFAULT_CATEGORIES;
+  }
+};
+
+export const setCachedCategories = (list) => {
+  try {
+    if (Array.isArray(list) && list.length > 0) {
+      localStorage.setItem("pwa_cache_categories", JSON.stringify(list));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+};
+
 export const getOfflineQueue = () => {
   try {
     const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);

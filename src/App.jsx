@@ -1,4 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
+import {
+  LayoutList,
+  Plus,
+  CalendarClock,
+  LogOut,
+  RefreshCw,
+  Pencil,
+  Trash2,
+  Zap,
+  CloudOff,
+  Wifi,
+  WifiOff,
+  Tag,
+} from "lucide-react";
 import AuthView from "./components/AuthView";
 import BalanceSummary from "./components/BalanceSummary";
 import FixedExpensesSection from "./components/FixedExpensesSection";
@@ -6,14 +20,17 @@ import InstallPwaPrompt from "./components/InstallPwaPrompt";
 import TransactionForm from "./components/TransactionForm";
 import {
   clearSession,
+  DEFAULT_CATEGORIES,
   fetchApi,
   fetchCurrentUser,
+  getCachedCategories,
   getCachedFixedExpenses,
   getCachedTransactions,
   getOfflineQueue,
   getStoredUser,
   getToken,
   removeOfflineQueueItem,
+  setCachedCategories,
   setCachedFixedExpenses,
   setCachedTransactions,
   syncOfflineTransactions,
@@ -22,7 +39,7 @@ import {
 export default function App() {
   const [user, setUser] = useState(() => (getToken() ? getStoredUser() : null));
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!getToken());
-  const [activeTab, setActiveTab] = useState("transactions"); // 'transactions' | 'fixed'
+  const [activeTab, setActiveTab] = useState("transactions"); // 'transactions' | 'new' | 'fixed'
   const [isOnline, setIsOnline] = useState(() =>
     typeof navigator !== "undefined" ? navigator.onLine : true
   );
@@ -33,6 +50,7 @@ export default function App() {
   const [fixedExpenses, setFixedExpenses] = useState(() =>
     getToken() ? getCachedFixedExpenses() : []
   );
+  const [categories, setCategories] = useState(() => getCachedCategories());
   const [offlineQueue, setOfflineQueue] = useState(() =>
     getToken() ? getOfflineQueue() : []
   );
@@ -64,6 +82,7 @@ export default function App() {
     setFixedExpenses([]);
     setOfflineQueue([]);
     setEditingTxId(null);
+    setActiveTab("transactions");
   }, []);
 
   const loadDashboardData = useCallback(async () => {
@@ -77,6 +96,7 @@ export default function App() {
     if (!navigator.onLine) {
       setTransactions(getCachedTransactions());
       setFixedExpenses(getCachedFixedExpenses());
+      setCategories(getCachedCategories());
       return;
     }
 
@@ -87,21 +107,30 @@ export default function App() {
       const synced = await syncOfflineTransactions();
       if (synced > 0) {
         showTempFeedback(
-          `☁️ Se sincronizaron ${synced} movimiento(s) pendientes.`
+          `Se sincronizaron ${synced} movimiento(s) pendientes.`
         );
       }
       setOfflineQueue(getOfflineQueue());
 
-      const [meData, txData, fixedData] = await Promise.all([
+      const [meData, txData, fixedData, catData] = await Promise.all([
         fetchCurrentUser(),
         fetchApi("/api/transactions"),
         fetchApi("/api/fixed-expenses"),
+        fetchApi("/api/categories").catch(() => getCachedCategories()),
       ]);
       setUser(meData);
       setTransactions(txData || []);
       setFixedExpenses(fixedData || []);
+      setCategories(
+        Array.isArray(catData) && catData.length > 0
+          ? catData
+          : DEFAULT_CATEGORIES
+      );
       setCachedTransactions(txData || []);
       setCachedFixedExpenses(fixedData || []);
+      if (Array.isArray(catData) && catData.length > 0) {
+        setCachedCategories(catData);
+      }
       setIsAuthenticated(true);
     } catch (err) {
       if (err.status === 401 || err.status === 403) {
@@ -109,6 +138,7 @@ export default function App() {
       } else if (err.isNetworkError) {
         setTransactions(getCachedTransactions());
         setFixedExpenses(getCachedFixedExpenses());
+        setCategories(getCachedCategories());
       } else {
         setError(err.message || "Error al cargar los datos.");
       }
@@ -145,15 +175,20 @@ export default function App() {
       if (!navigator.onLine) return;
       try {
         await syncOfflineTransactions();
-        const [meData, txData, fixedData] = await Promise.all([
+        const [meData, txData, fixedData, catData] = await Promise.all([
           fetchCurrentUser(),
           fetchApi("/api/transactions"),
           fetchApi("/api/fixed-expenses"),
+          fetchApi("/api/categories").catch(() => getCachedCategories()),
         ]);
         if (cancelled) return;
         setUser(meData);
         setTransactions(txData || []);
         setFixedExpenses(fixedData || []);
+        if (Array.isArray(catData) && catData.length > 0) {
+          setCategories(catData);
+          setCachedCategories(catData);
+        }
         setCachedTransactions(txData || []);
         setCachedFixedExpenses(fixedData || []);
         setOfflineQueue(getOfflineQueue());
@@ -179,7 +214,7 @@ export default function App() {
       type: tx.type,
       amount: String(tx.amount),
       description: tx.description || "",
-      category: tx.category || "General",
+      category: tx.category || categories[0]?.name || "General",
     });
   };
 
@@ -193,7 +228,7 @@ export default function App() {
           type: editTxForm.type,
           amount: parseFloat(editTxForm.amount),
           description: editTxForm.description.trim(),
-          category: editTxForm.category.trim() || "General",
+          category: editTxForm.category || "General",
         }),
       });
       setEditingTxId(null);
@@ -242,6 +277,14 @@ export default function App() {
     }
   };
 
+  const getEditCategoryOptions = (currentCat) => {
+    const names = categories.map((c) => c.name);
+    if (currentCat && !names.includes(currentCat)) {
+      return [{ id: "custom", name: currentCat }, ...categories];
+    }
+    return categories;
+  };
+
   const combinedTransactions = [...offlineQueue, ...transactions];
 
   // Vista centrada vertical y horizontalmente cuando no ha iniciado sesión
@@ -251,7 +294,7 @@ export default function App() {
         <div className="w-full max-w-md flex flex-col items-center">
           <header className="w-full text-center mb-6">
             <h1 className="text-3xl font-extrabold text-indigo-600 tracking-tight">
-              PWA Gastos Personales
+              Control de gastos
             </h1>
             <p className="text-xs sm:text-sm text-gray-500 mt-1">
               Control financiero rápido, seguro y conectado con Supabase
@@ -266,6 +309,7 @@ export default function App() {
                 setUser(loggedUser);
                 setTransactions(getCachedTransactions());
                 setFixedExpenses(getCachedFixedExpenses());
+                setCategories(getCachedCategories());
                 setOfflineQueue(getOfflineQueue());
                 setIsAuthenticated(true);
               }}
@@ -282,16 +326,26 @@ export default function App() {
         <div className="text-center sm:text-left">
           <div className="flex items-center justify-center sm:justify-start gap-2">
             <h1 className="text-2xl sm:text-3xl font-extrabold text-indigo-600 tracking-tight">
-              PWA Gastos Personales
+              Control de gastos
             </h1>
             <span
-              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
                 isOnline
                   ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                   : "bg-amber-50 text-amber-700 border border-amber-200"
               }`}
             >
-              {isOnline ? "● En línea" : "● Offline"}
+              {isOnline ? (
+                <>
+                  <Wifi className="w-3 h-3" />
+                  <span>En línea</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-3 h-3" />
+                  <span>Offline</span>
+                </>
+              )}
             </span>
           </div>
           <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
@@ -310,9 +364,10 @@ export default function App() {
           </div>
           <button
             onClick={handleLogout}
-            className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1.5 rounded-xl text-xs font-semibold transition duration-200"
+            className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1.5 rounded-xl text-xs font-semibold transition duration-200 inline-flex items-center gap-1.5"
           >
-            Cerrar Sesión
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Cerrar Sesión</span>
           </button>
         </div>
       </header>
@@ -324,10 +379,13 @@ export default function App() {
         {/* Aviso de modo sin conexión o cola pendiente */}
         {(!isOnline || offlineQueue.length > 0) && (
           <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs p-3.5 rounded-2xl mb-5 flex flex-wrap items-center justify-between gap-2">
-            <span>
-              {!isOnline
-                ? "📡 Estás sin conexión. Puedes consultar tu historial guardado y registrar nuevos movimientos (se sincronizarán al volver a conectarte)."
-                : `☁️ Tienes ${offlineQueue.length} movimiento(s) guardados sin conexión listos para sincronizar.`}
+            <span className="inline-flex items-center gap-2">
+              <CloudOff className="w-4 h-4 shrink-0 text-amber-600" />
+              <span>
+                {!isOnline
+                  ? "Estás sin conexión. Puedes consultar tu historial guardado y registrar nuevos movimientos (se sincronizarán al volver a conectarte)."
+                  : `Tienes ${offlineQueue.length} movimiento(s) guardados sin conexión listos para sincronizar.`}
+              </span>
             </span>
             {isOnline && offlineQueue.length > 0 && (
               <button
@@ -341,12 +399,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Resumen de Balance */}
-        <BalanceSummary
-          transactions={combinedTransactions}
-          fixedExpenses={fixedExpenses}
-        />
-
         {feedback && (
           <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium p-3 rounded-xl mb-4 text-center">
             {feedback}
@@ -358,40 +410,49 @@ export default function App() {
           <button
             type="button"
             onClick={() => setActiveTab("transactions")}
-            className={`flex-1 py-2.5 text-xs sm:text-sm font-bold rounded-xl transition duration-200 ${
+            className={`flex-1 py-2.5 text-xs sm:text-sm font-bold rounded-xl transition duration-200 inline-flex items-center justify-center gap-2 ${
               activeTab === "transactions"
                 ? "bg-white text-indigo-600 shadow-sm"
                 : "text-gray-600 hover:text-gray-900"
             }`}
           >
-            💸 Movimientos ({combinedTransactions.length})
+            <LayoutList className="w-4 h-4" />
+            <span>Movimientos ({combinedTransactions.length})</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("new")}
+            className={`flex-1 py-2.5 text-xs sm:text-sm font-bold rounded-xl transition duration-200 inline-flex items-center justify-center gap-2 ${
+              activeTab === "new"
+                ? "bg-white text-indigo-600 shadow-sm"
+                : "text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            <Plus className="w-4 h-4" />
+            <span>Registrar</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setActiveTab("fixed")}
-            className={`flex-1 py-2.5 text-xs sm:text-sm font-bold rounded-xl transition duration-200 ${
+            className={`flex-1 py-2.5 text-xs sm:text-sm font-bold rounded-xl transition duration-200 inline-flex items-center justify-center gap-2 ${
               activeTab === "fixed"
                 ? "bg-white text-indigo-600 shadow-sm"
                 : "text-gray-600 hover:text-gray-900"
             }`}
           >
-            📅 Gastos Fijos ({fixedExpenses.length})
+            <CalendarClock className="w-4 h-4" />
+            <span>Gastos Fijos ({fixedExpenses.length})</span>
           </button>
         </div>
 
-        {activeTab === "transactions" ? (
+        {/* PANTALLA 1: Resumen de Balance + Historial de Movimientos */}
+        {activeTab === "transactions" && (
           <div className="space-y-6">
-            <TransactionForm
-              onTransactionAdded={(info) => {
-                if (info?.queuedOffline) {
-                  setOfflineQueue(getOfflineQueue());
-                  showTempFeedback(
-                    "Guardado en el dispositivo (se sincronizará al tener internet)."
-                  );
-                } else {
-                  loadDashboardData();
-                }
-              }}
+            <BalanceSummary
+              transactions={combinedTransactions}
+              fixedExpenses={fixedExpenses}
             />
 
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -401,9 +462,10 @@ export default function App() {
                 </h2>
                 <button
                   onClick={loadDashboardData}
-                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-xl text-xs font-medium transition duration-200"
+                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-xl text-xs font-medium transition duration-200 inline-flex items-center gap-1.5"
                 >
-                  Actualizar
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Actualizar</span>
                 </button>
               </div>
 
@@ -424,9 +486,14 @@ export default function App() {
                   <p className="text-sm text-gray-400">
                     No hay transacciones registradas aún.
                   </p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    ¡Usa el formulario superior para registrar la primera!
-                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("new")}
+                    className="mt-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Registrar primera transacción</span>
+                  </button>
                 </div>
               )}
 
@@ -448,14 +515,15 @@ export default function App() {
                                   type: e.target.value,
                                 })
                               }
-                              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-white"
+                              className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm bg-white"
                             >
-                              <option value="expense">Gasto 🔴</option>
-                              <option value="income">Ingreso 🟢</option>
+                              <option value="expense">Gasto</option>
+                              <option value="income">Ingreso</option>
                             </select>
                             <input
                               type="number"
                               step="0.01"
+                              inputMode="decimal"
                               value={editTxForm.amount}
                               onChange={(e) =>
                                 setEditTxForm({
@@ -463,7 +531,7 @@ export default function App() {
                                   amount: e.target.value,
                                 })
                               }
-                              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm"
+                              className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm"
                               placeholder="Monto"
                             />
                           </div>
@@ -477,11 +545,10 @@ export default function App() {
                                   description: e.target.value,
                                 })
                               }
-                              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm"
+                              className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm"
                               placeholder="Descripción"
                             />
-                            <input
-                              type="text"
+                            <select
                               value={editTxForm.category}
                               onChange={(e) =>
                                 setEditTxForm({
@@ -489,23 +556,33 @@ export default function App() {
                                   category: e.target.value,
                                 })
                               }
-                              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm"
-                              placeholder="Categoría"
-                            />
+                              className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm bg-white"
+                            >
+                              {getEditCategoryOptions(editTxForm.category).map(
+                                (cat) => (
+                                  <option
+                                    key={cat.id || cat.name}
+                                    value={cat.name}
+                                  >
+                                    {cat.name}
+                                  </option>
+                                )
+                              )}
+                            </select>
                           </div>
                           <div className="flex justify-end gap-2">
                             <button
                               type="button"
                               disabled={isBusy}
                               onClick={() => handleSaveTxEdit(tx.id)}
-                              className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded-lg text-xs font-medium"
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium"
                             >
                               Guardar
                             </button>
                             <button
                               type="button"
                               onClick={() => setEditingTxId(null)}
-                              className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1 rounded-lg text-xs font-medium"
+                              className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg text-xs font-medium"
                             >
                               Cancelar
                             </button>
@@ -525,19 +602,22 @@ export default function App() {
                               {tx.description || "Sin descripción"}
                             </p>
                             {tx.is_offline_pending && (
-                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                                ☁️ Pendiente de sincronizar
+                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 inline-flex items-center gap-1">
+                                <CloudOff className="w-3 h-3" />
+                                <span>Pendiente de sincronizar</span>
                               </span>
                             )}
                             {(tx.fixed_expense_id || tx.billing_period) && (
-                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
-                                ⚡ Cargo fijo automático
+                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 inline-flex items-center gap-1">
+                                <Zap className="w-3 h-3" />
+                                <span>Cargo fijo automático</span>
                               </span>
                             )}
                           </div>
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
-                              {tx.category || "General"}
+                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                              <Tag className="w-3 h-3" />
+                              <span>{tx.category || "General"}</span>
                             </span>
                             {tx.date && (
                               <span className="text-xs text-gray-400">
@@ -565,18 +645,20 @@ export default function App() {
                                 type="button"
                                 disabled={isBusy}
                                 onClick={() => startEditingTx(tx)}
-                                className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1 rounded-lg text-xs font-medium transition"
+                                className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
                               >
-                                Editar
+                                <Pencil className="w-3.5 h-3.5" />
+                                <span>Editar</span>
                               </button>
                             )}
                             <button
                               type="button"
                               disabled={isBusy}
                               onClick={() => handleDeleteTx(tx)}
-                              className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1 rounded-lg text-xs font-medium transition"
+                              className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
                             >
-                              Eliminar
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Eliminar</span>
                             </button>
                           </div>
                         </div>
@@ -587,9 +669,34 @@ export default function App() {
               )}
             </div>
           </div>
-        ) : (
+        )}
+
+        {/* PANTALLA 2: Pantalla dedicada para Registrar Gastos e Ingresos */}
+        {activeTab === "new" && (
+          <TransactionForm
+            categories={categories}
+            onCancel={() => setActiveTab("transactions")}
+            onTransactionAdded={async (info) => {
+              if (info?.queuedOffline) {
+                setOfflineQueue(getOfflineQueue());
+                setActiveTab("transactions");
+                showTempFeedback(
+                  "Guardado en el dispositivo (se sincronizará al tener internet)."
+                );
+              } else {
+                await loadDashboardData();
+                setActiveTab("transactions");
+                showTempFeedback("Transacción registrada exitosamente.");
+              }
+            }}
+          />
+        )}
+
+        {/* PANTALLA 3: Gestión de Gastos Fijos */}
+        {activeTab === "fixed" && (
           <FixedExpensesSection
             fixedExpenses={fixedExpenses}
+            categories={categories}
             onChanged={loadDashboardData}
             onTransactionRecorded={async () => {
               await loadDashboardData();
@@ -609,29 +716,29 @@ export default function App() {
             setActiveTab("transactions");
             window.scrollTo({ top: 0, behavior: "smooth" });
           }}
-          className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition ${
+          className={`flex flex-col items-center gap-1 px-4 py-1 rounded-xl transition ${
             activeTab === "transactions"
               ? "text-indigo-600 font-bold"
               : "text-gray-400 font-medium"
           }`}
         >
-          <span className="text-lg leading-none">💸</span>
+          <LayoutList className="w-5 h-5" />
           <span className="text-[11px]">Movimientos</span>
         </button>
 
         <button
           type="button"
           onClick={() => {
-            setActiveTab("transactions");
-            setTimeout(() => {
-              document
-                .getElementById("transaction-form-card")
-                ?.scrollIntoView({ behavior: "smooth", block: "center" });
-            }, 50);
+            setActiveTab("new");
+            window.scrollTo({ top: 0, behavior: "smooth" });
           }}
-          className="bg-indigo-600 text-white px-4 py-2 rounded-2xl text-xs font-bold shadow-sm flex items-center gap-1"
+          className={`px-4 py-2 rounded-2xl text-xs font-bold shadow-sm flex items-center gap-1.5 transition ${
+            activeTab === "new"
+              ? "bg-indigo-700 text-white ring-2 ring-indigo-300"
+              : "bg-indigo-600 text-white"
+          }`}
         >
-          <span>＋</span>
+          <Plus className="w-4 h-4" />
           <span>Registrar</span>
         </button>
 
@@ -641,13 +748,13 @@ export default function App() {
             setActiveTab("fixed");
             window.scrollTo({ top: 0, behavior: "smooth" });
           }}
-          className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition ${
+          className={`flex flex-col items-center gap-1 px-4 py-1 rounded-xl transition ${
             activeTab === "fixed"
               ? "text-indigo-600 font-bold"
               : "text-gray-400 font-medium"
           }`}
         >
-          <span className="text-lg leading-none">📅</span>
+          <CalendarClock className="w-5 h-5" />
           <span className="text-[11px]">Gastos Fijos</span>
         </button>
       </nav>
