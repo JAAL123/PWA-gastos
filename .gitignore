@@ -39,3 +39,6 @@ __pycache__/
 # Variables de entorno
 .env
 .vscode
+
+# Archivos media
+media/

@@ -156,6 +156,26 @@ def init_db():
             )
         )
 
+        # Activar Row Level Security (RLS) y bloquear acceso desde la Data API pública (anon/authenticated)
+        # El backend FastAPI conecta con el rol propietario (postgres), que ignora RLS y mantiene acceso total.
+        conn.execute(text("ALTER TABLE users ENABLE ROW LEVEL SECURITY;"))
+        conn.execute(text("ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;"))
+        conn.execute(text("ALTER TABLE fixed_expenses ENABLE ROW LEVEL SECURITY;"))
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    REVOKE ALL ON TABLE public.users, public.transactions, public.fixed_expenses FROM anon, authenticated;
+                EXCEPTION
+                    WHEN OTHERS THEN
+                        NULL;
+                END
+                $$;
+                """
+            )
+        )
+
         # Intentar registrar el job diario en pg_cron (si la extensión está habilitada en Supabase)
         conn.execute(
             text(
