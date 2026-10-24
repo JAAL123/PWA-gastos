@@ -11,6 +11,21 @@ import {
   fetchApi,
 } from "../services/api";
 
+const getTodayIso = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const isoToDdMmYyyy = (isoStr) => {
+  if (!isoStr) return "";
+  const parts = isoStr.split("-");
+  if (parts.length !== 3) return isoStr;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+};
+
 export default function TransactionForm({
   categories = DEFAULT_CATEGORIES,
   onTransactionAdded,
@@ -27,6 +42,7 @@ export default function TransactionForm({
   const [category, setCategory] = useState(
     () => categoryList[0]?.name || "General"
   );
+  const [date, setDate] = useState(getTodayIso);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -35,11 +51,13 @@ export default function TransactionForm({
     setLoading(true);
     setError("");
 
+    const selectedDate = date || getTodayIso();
     const payload = {
       description: description.trim(),
       amount: parseFloat(amount),
       type,
       category: category || "General",
+      date: `${selectedDate}T12:00:00`,
     };
 
     try {
@@ -47,6 +65,7 @@ export default function TransactionForm({
         enqueueOfflineTransaction(payload);
         setDescription("");
         setAmount("");
+        setDate(getTodayIso());
         if (onTransactionAdded) onTransactionAdded({ queuedOffline: true });
         return;
       }
@@ -58,12 +77,14 @@ export default function TransactionForm({
 
       setDescription("");
       setAmount("");
+      setDate(getTodayIso());
       if (onTransactionAdded) onTransactionAdded({ queuedOffline: false });
     } catch (err) {
       if (err.isNetworkError) {
         enqueueOfflineTransaction(payload);
         setDescription("");
         setAmount("");
+        setDate(getTodayIso());
         if (onTransactionAdded) onTransactionAdded({ queuedOffline: true });
       } else {
         setError(err.message);
@@ -76,7 +97,7 @@ export default function TransactionForm({
   return (
     <div
       id="transaction-form-card"
-      className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"
+      className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 overflow-hidden"
     >
       <div className="flex items-center justify-between mb-5">
         <div>
@@ -148,8 +169,8 @@ export default function TransactionForm({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="min-w-0">
             <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600 mb-1">
               Monto ($)
             </label>
@@ -161,19 +182,19 @@ export default function TransactionForm({
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.00"
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-sm"
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-sm box-border"
               required
             />
           </div>
 
-          <div>
+          <div className="min-w-0">
             <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600 mb-1">
               Categoría
             </label>
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-sm bg-white"
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-sm bg-white box-border"
             >
               {categoryList.map((cat) => (
                 <option key={cat.id || cat.name} value={cat.name}>
@@ -181,6 +202,21 @@ export default function TransactionForm({
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="min-w-0 overflow-hidden">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600 mb-1">
+              Fecha ({isoToDdMmYyyy(date)})
+            </label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => {
+                if (e.target.value) setDate(e.target.value);
+              }}
+              className="block w-full max-w-full min-w-0 px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-sm bg-white box-border appearance-none"
+              required
+            />
           </div>
         </div>
 

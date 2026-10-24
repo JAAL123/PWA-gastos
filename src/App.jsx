@@ -103,6 +103,7 @@ export default function App() {
     amount: "",
     description: "",
     category: "General",
+    date: "",
   });
   const [txActionLoadingId, setTxActionLoadingId] = useState(null);
 
@@ -324,11 +325,13 @@ export default function App() {
 
   const startEditingTx = (tx) => {
     setEditingTxId(tx.id);
+    const isoDate = tx.date ? String(tx.date).slice(0, 10) : defaultRange.to;
     setEditTxForm({
       type: tx.type,
       amount: String(tx.amount),
       description: tx.description || "",
       category: tx.category || categories[0]?.name || "General",
+      date: isoDate,
     });
   };
 
@@ -343,6 +346,7 @@ export default function App() {
           amount: parseFloat(editTxForm.amount),
           description: editTxForm.description.trim(),
           category: editTxForm.category || "General",
+          ...(editTxForm.date ? { date: `${editTxForm.date}T12:00:00` } : {}),
         }),
       });
       setEditingTxId(null);
@@ -757,7 +761,7 @@ export default function App() {
                                 placeholder="Monto"
                               />
                             </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                               <input
                                 type="text"
                                 value={editTxForm.description}
@@ -767,7 +771,7 @@ export default function App() {
                                     description: e.target.value,
                                   })
                                 }
-                                className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm"
+                                className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm min-w-0"
                                 placeholder="Descripción"
                               />
                               <select
@@ -778,7 +782,7 @@ export default function App() {
                                     category: e.target.value,
                                   })
                                 }
-                                className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm bg-white"
+                                className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm bg-white min-w-0"
                               >
                                 {getEditCategoryOptions(
                                   editTxForm.category
@@ -791,6 +795,19 @@ export default function App() {
                                   </option>
                                 ))}
                               </select>
+                              <div className="min-w-0 overflow-hidden">
+                                <input
+                                  type="date"
+                                  value={editTxForm.date}
+                                  onChange={(e) =>
+                                    setEditTxForm({
+                                      ...editTxForm,
+                                      date: e.target.value,
+                                    })
+                                  }
+                                  className="block w-full max-w-full min-w-0 px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm bg-white box-border appearance-none"
+                                />
+                              </div>
                             </div>
                             <div className="flex justify-end gap-2">
                               <button

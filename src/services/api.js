@@ -172,7 +172,7 @@ export const enqueueOfflineTransaction = (payload) => {
     amount: Number(payload.amount),
     category: payload.category || "General",
     description: payload.description || "",
-    date: new Date().toISOString(),
+    date: payload.date || new Date().toISOString(),
     is_offline_pending: true,
   };
 
