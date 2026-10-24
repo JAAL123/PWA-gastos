@@ -1,8 +1,10 @@
+import math
 from contextlib import asynccontextmanager
+from datetime import date, datetime
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
+from sqlalchemy import Date, case, cast, func, text
 from sqlmodel import Session, select
 
 from api.database import (
@@ -17,8 +19,10 @@ from api.models import (
     FixedExpense,
     FixedExpenseCreate,
     FixedExpenseUpdate,
+    PaginatedTransactionsResponse,
     Transaction,
     TransactionCreate,
+    TransactionSummary,
     TransactionUpdate,
     User,
     UserCreate,
@@ -156,21 +160,117 @@ def get_categories(
 
 
 
+def _parse_date_param(raw: str | None) -> date | None:
+    if not raw or not raw.strip():
+        return None
+    val = raw.strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(val, fmt).date()
+        except ValueError:
+            continue
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Formato de fecha inválido ({val}). Usa dd/mm/yyyy o yyyy-mm-dd.",
+    )
+
+
 # --- TRANSACCIONES ---
-@app.get("/api/transactions", response_model=list[Transaction])
+@app.get("/api/transactions", response_model=PaginatedTransactionsResponse)
 def get_transactions(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    category: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     # Procesar automáticamente gastos fijos vencidos del usuario antes de listar
     process_due_fixed_expenses(session, user_id=current_user.id)
 
-    transactions = session.exec(
+    now = get_local_now()
+    today_date = now.date()
+    first_of_month = date(today_date.year, today_date.month, 1)
+
+    parsed_from = _parse_date_param(date_from) or first_of_month
+    parsed_to = _parse_date_param(date_to) or today_date
+
+    conditions = [
+        Transaction.user_id == current_user.id,
+        cast(Transaction.date, Date) >= parsed_from,
+        cast(Transaction.date, Date) <= parsed_to,
+    ]
+
+    if category and category.strip() and category.strip().lower() not in ("all", "todas"):
+        conditions.append(
+            func.lower(Transaction.category) == category.strip().lower()
+        )
+
+    agg_row = session.exec(
+        select(
+            func.count(Transaction.id),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Transaction.type == "income", Transaction.amount),
+                        else_=0.0,
+                    )
+                ),
+                0.0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Transaction.type == "expense", Transaction.amount),
+                        else_=0.0,
+                    )
+                ),
+                0.0,
+            ),
+            func.coalesce(
+                func.sum(case((Transaction.type == "income", 1), else_=0)),
+                0,
+            ),
+            func.coalesce(
+                func.sum(case((Transaction.type == "expense", 1), else_=0)),
+                0,
+            ),
+        ).where(*conditions)
+    ).one()
+
+    total_count = int(agg_row[0] or 0)
+    total_income = float(agg_row[1] or 0.0)
+    total_expense = float(agg_row[2] or 0.0)
+    income_count = int(agg_row[3] or 0)
+    expense_count = int(agg_row[4] or 0)
+
+    total_pages = max(1, math.ceil(total_count / page_size))
+    safe_page = min(page, total_pages)
+    offset = (safe_page - 1) * page_size
+
+    items = session.exec(
         select(Transaction)
-        .where(Transaction.user_id == current_user.id)
+        .where(*conditions)
         .order_by(Transaction.date.desc(), Transaction.id.desc())
+        .offset(offset)
+        .limit(page_size)
     ).all()
-    return transactions
+
+    return PaginatedTransactionsResponse(
+        items=items,
+        total=total_count,
+        page=safe_page,
+        page_size=page_size,
+        total_pages=total_pages,
+        summary=TransactionSummary(
+            total_income=total_income,
+            total_expense=total_expense,
+            net_balance=total_income - total_expense,
+            income_count=income_count,
+            expense_count=expense_count,
+        ),
+    )
 
 
 @app.post(

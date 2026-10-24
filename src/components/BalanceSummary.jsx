@@ -1,15 +1,32 @@
 import { Wallet, TrendingUp, TrendingDown } from "lucide-react";
 
-export default function BalanceSummary({ transactions = [], fixedExpenses = [] }) {
-  const totalIncome = transactions
+export default function BalanceSummary({
+  summary = null,
+  offlineQueue = [],
+  fixedExpenses = [],
+}) {
+  const offlineIncome = offlineQueue
     .filter((tx) => tx.type === "income")
     .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
 
-  const totalExpense = transactions
+  const offlineExpense = offlineQueue
     .filter((tx) => tx.type === "expense")
     .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
 
+  const offlineIncomeCount = offlineQueue.filter(
+    (tx) => tx.type === "income"
+  ).length;
+  const offlineExpenseCount = offlineQueue.filter(
+    (tx) => tx.type === "expense"
+  ).length;
+
+  const totalIncome = Number(summary?.total_income || 0) + offlineIncome;
+  const totalExpense = Number(summary?.total_expense || 0) + offlineExpense;
   const netBalance = totalIncome - totalExpense;
+
+  const incomeCount = Number(summary?.income_count || 0) + offlineIncomeCount;
+  const expenseCount =
+    Number(summary?.expense_count || 0) + offlineExpenseCount;
 
   const activeFixedTotal = fixedExpenses
     .filter((item) => item.is_active)
@@ -43,7 +60,7 @@ export default function BalanceSummary({ transactions = [], fixedExpenses = [] }
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between">
         <div className="flex items-center justify-between">
           <span className="text-xs uppercase tracking-wider font-semibold text-gray-400">
-            Ingresos Totales
+            Ingresos del Periodo
           </span>
           <TrendingUp className="w-4 h-4 text-emerald-500" />
         </div>
@@ -51,7 +68,7 @@ export default function BalanceSummary({ transactions = [], fixedExpenses = [] }
           +${formatMoney(totalIncome)}
         </p>
         <span className="text-[11px] text-gray-400 mt-2">
-          {transactions.filter((tx) => tx.type === "income").length} movimientos
+          {incomeCount} movimientos
         </span>
       </div>
 
@@ -59,7 +76,7 @@ export default function BalanceSummary({ transactions = [], fixedExpenses = [] }
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between">
         <div className="flex items-center justify-between">
           <span className="text-xs uppercase tracking-wider font-semibold text-gray-400">
-            Gastos Totales
+            Gastos del Periodo
           </span>
           <TrendingDown className="w-4 h-4 text-rose-500" />
         </div>
@@ -67,7 +84,7 @@ export default function BalanceSummary({ transactions = [], fixedExpenses = [] }
           -${formatMoney(totalExpense)}
         </p>
         <span className="text-[11px] text-gray-400 mt-2">
-          {transactions.filter((tx) => tx.type === "expense").length} movimientos
+          {expenseCount} movimientos
         </span>
       </div>
     </div>

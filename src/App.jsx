@@ -12,6 +12,11 @@ import {
   Wifi,
   WifiOff,
   Tag,
+  Filter,
+  ChevronLeft,
+  ChevronRight,
+  RotateCcw,
+  Calendar,
 } from "lucide-react";
 import AuthView from "./components/AuthView";
 import BalanceSummary from "./components/BalanceSummary";
@@ -36,6 +41,28 @@ import {
   syncOfflineTransactions,
 } from "./services/api";
 
+const PAGE_SIZE = 10;
+
+// Helpers de fechas por defecto: desde el día 01 del mes actual hasta hoy
+const getDefaultDateRange = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return {
+    from: `${year}-${month}-01`,
+    to: `${year}-${month}-${day}`,
+  };
+};
+
+// Convierte YYYY-MM-DD a DD/MM/YYYY para mostrar y enviar al backend
+const isoToDdMmYyyy = (isoStr) => {
+  if (!isoStr) return "";
+  const parts = isoStr.split("-");
+  if (parts.length !== 3) return isoStr;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+};
+
 export default function App() {
   const [user, setUser] = useState(() => (getToken() ? getStoredUser() : null));
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!getToken());
@@ -44,8 +71,18 @@ export default function App() {
     typeof navigator !== "undefined" ? navigator.onLine : true
   );
 
-  const [transactions, setTransactions] = useState(() =>
-    getToken() ? getCachedTransactions() : []
+  // Filtros y paginación del Historial de Transacciones (por defecto: 01 del mes actual hasta hoy, sin categoría)
+  const [filterCategory, setFilterCategory] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState(
+    () => getDefaultDateRange().from
+  );
+  const [filterDateTo, setFilterDateTo] = useState(
+    () => getDefaultDateRange().to
+  );
+  const [page, setPage] = useState(1);
+
+  const [txPayload, setTxPayload] = useState(() =>
+    getToken() ? getCachedTransactions() : getCachedTransactions()
   );
   const [fixedExpenses, setFixedExpenses] = useState(() =>
     getToken() ? getCachedFixedExpenses() : []
@@ -78,74 +115,116 @@ export default function App() {
     clearSession();
     setUser(null);
     setIsAuthenticated(false);
-    setTransactions([]);
+    setTxPayload(getCachedTransactions());
     setFixedExpenses([]);
     setOfflineQueue([]);
     setEditingTxId(null);
     setActiveTab("transactions");
   }, []);
 
-  const loadDashboardData = useCallback(async () => {
-    if (!getToken()) {
-      handleLogout();
-      return;
-    }
-
-    setOfflineQueue(getOfflineQueue());
-
-    if (!navigator.onLine) {
-      setTransactions(getCachedTransactions());
-      setFixedExpenses(getCachedFixedExpenses());
-      setCategories(getCachedCategories());
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-
-    try {
-      const synced = await syncOfflineTransactions();
-      if (synced > 0) {
-        showTempFeedback(
-          `Se sincronizaron ${synced} movimiento(s) pendientes.`
-        );
+  const buildTransactionsEndpoint = useCallback(
+    (targetPage, categoryVal, fromVal, toVal) => {
+      const params = new URLSearchParams();
+      params.set("page", String(targetPage));
+      params.set("page_size", String(PAGE_SIZE));
+      if (categoryVal) {
+        params.set("category", categoryVal);
       }
+      if (fromVal) {
+        params.set("date_from", isoToDdMmYyyy(fromVal));
+      }
+      if (toVal) {
+        params.set("date_to", isoToDdMmYyyy(toVal));
+      }
+      return `/api/transactions?${params.toString()}`;
+    },
+    []
+  );
+
+  const loadDashboardData = useCallback(
+    async (overridePage) => {
+      if (!getToken()) {
+        handleLogout();
+        return;
+      }
+
+      const activePage = overridePage ?? page;
       setOfflineQueue(getOfflineQueue());
 
-      const [meData, txData, fixedData, catData] = await Promise.all([
-        fetchCurrentUser(),
-        fetchApi("/api/transactions"),
-        fetchApi("/api/fixed-expenses"),
-        fetchApi("/api/categories").catch(() => getCachedCategories()),
-      ]);
-      setUser(meData);
-      setTransactions(txData || []);
-      setFixedExpenses(fixedData || []);
-      setCategories(
-        Array.isArray(catData) && catData.length > 0
-          ? catData
-          : DEFAULT_CATEGORIES
-      );
-      setCachedTransactions(txData || []);
-      setCachedFixedExpenses(fixedData || []);
-      if (Array.isArray(catData) && catData.length > 0) {
-        setCachedCategories(catData);
-      }
-      setIsAuthenticated(true);
-    } catch (err) {
-      if (err.status === 401 || err.status === 403) {
-        handleLogout();
-      } else if (err.isNetworkError) {
-        setTransactions(getCachedTransactions());
+      if (!navigator.onLine) {
+        setTxPayload(getCachedTransactions());
         setFixedExpenses(getCachedFixedExpenses());
         setCategories(getCachedCategories());
-      } else {
-        setError(err.message || "Error al cargar los datos.");
+        return;
       }
-    } finally {
-      setLoading(false);
-    }
-  }, [handleLogout, showTempFeedback]);
+
+      setLoading(true);
+      setError("");
+
+      try {
+        const synced = await syncOfflineTransactions();
+        if (synced > 0) {
+          showTempFeedback(
+            `Se sincronizaron ${synced} movimiento(s) pendientes.`
+          );
+        }
+        setOfflineQueue(getOfflineQueue());
+
+        const txEndpoint = buildTransactionsEndpoint(
+          activePage,
+          filterCategory,
+          filterDateFrom,
+          filterDateTo
+        );
+
+        const [meData, txData, fixedData, catData] = await Promise.all([
+          fetchCurrentUser(),
+          fetchApi(txEndpoint),
+          fetchApi("/api/fixed-expenses"),
+          fetchApi("/api/categories").catch(() => getCachedCategories()),
+        ]);
+
+        setUser(meData);
+        setTxPayload(txData);
+        if (txData?.page && txData.page !== activePage) {
+          setPage(txData.page);
+        }
+        setFixedExpenses(fixedData || []);
+        setCategories(
+          Array.isArray(catData) && catData.length > 0
+            ? catData
+            : DEFAULT_CATEGORIES
+        );
+        setCachedTransactions(txData);
+        setCachedFixedExpenses(fixedData || []);
+        if (Array.isArray(catData) && catData.length > 0) {
+          setCachedCategories(catData);
+        }
+        setIsAuthenticated(true);
+      } catch (err) {
+        if (err.status === 401 || err.status === 403) {
+          handleLogout();
+        } else if (err.isNetworkError) {
+          setTxPayload(getCachedTransactions());
+          setFixedExpenses(getCachedFixedExpenses());
+          setCategories(getCachedCategories());
+        } else {
+          setError(err.message || "Error al cargar los datos.");
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      page,
+      filterCategory,
+      filterDateFrom,
+      filterDateTo,
+      buildTransactionsEndpoint,
+      handleLogout,
+      showTempFeedback,
+    ]
+  );
 
   // Escuchar cambios de conectividad Online / Offline
   useEffect(() => {
@@ -167,29 +246,38 @@ export default function App() {
     };
   }, [loadDashboardData]);
 
+  // Cargar datos cuando cambian los filtros o la página
   useEffect(() => {
     if (!isAuthenticated) return;
     let cancelled = false;
 
-    async function initDashboard() {
+    async function fetchFilteredDashboard() {
       if (!navigator.onLine) return;
+      setLoading(true);
+      setError("");
       try {
         await syncOfflineTransactions();
+        const txEndpoint = buildTransactionsEndpoint(
+          page,
+          filterCategory,
+          filterDateFrom,
+          filterDateTo
+        );
         const [meData, txData, fixedData, catData] = await Promise.all([
           fetchCurrentUser(),
-          fetchApi("/api/transactions"),
+          fetchApi(txEndpoint),
           fetchApi("/api/fixed-expenses"),
           fetchApi("/api/categories").catch(() => getCachedCategories()),
         ]);
         if (cancelled) return;
         setUser(meData);
-        setTransactions(txData || []);
+        setTxPayload(txData);
         setFixedExpenses(fixedData || []);
         if (Array.isArray(catData) && catData.length > 0) {
           setCategories(catData);
           setCachedCategories(catData);
         }
-        setCachedTransactions(txData || []);
+        setCachedTransactions(txData);
         setCachedFixedExpenses(fixedData || []);
         setOfflineQueue(getOfflineQueue());
       } catch (err) {
@@ -199,14 +287,40 @@ export default function App() {
         } else if (!err.isNetworkError) {
           setError(err.message || "Error al cargar los datos.");
         }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
-    initDashboard();
+    fetchFilteredDashboard();
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated, handleLogout]);
+  }, [
+    isAuthenticated,
+    page,
+    filterCategory,
+    filterDateFrom,
+    filterDateTo,
+    buildTransactionsEndpoint,
+    handleLogout,
+  ]);
+
+  const handleResetFilters = () => {
+    const defaults = getDefaultDateRange();
+    setFilterCategory("");
+    setFilterDateFrom(defaults.from);
+    setFilterDateTo(defaults.to);
+    setPage(1);
+  };
+
+  const defaultRange = getDefaultDateRange();
+  const hasCustomFilters =
+    filterCategory !== "" ||
+    filterDateFrom !== defaultRange.from ||
+    filterDateTo !== defaultRange.to;
 
   const startEditingTx = (tx) => {
     setEditingTxId(tx.id);
@@ -269,7 +383,7 @@ export default function App() {
     try {
       return new Date(dateStr).toLocaleDateString("es-MX", {
         day: "2-digit",
-        month: "short",
+        month: "2-digit",
         year: "numeric",
       });
     } catch {
@@ -285,7 +399,14 @@ export default function App() {
     return categories;
   };
 
-  const combinedTransactions = [...offlineQueue, ...transactions];
+  const pageItems = Array.isArray(txPayload?.items) ? txPayload.items : [];
+  const totalCount = Number(txPayload?.total || 0);
+  const currentPage = Number(txPayload?.page || page || 1);
+  const totalPages = Math.max(1, Number(txPayload?.total_pages || 1));
+
+  // Si estamos en la página 1, mostrar también en la parte superior cualquier movimiento offline pendiente
+  const visibleTransactions =
+    currentPage === 1 ? [...offlineQueue, ...pageItems] : pageItems;
 
   // Vista centrada vertical y horizontalmente cuando no ha iniciado sesión
   if (!isAuthenticated) {
@@ -307,7 +428,7 @@ export default function App() {
             <AuthView
               onAuthenticated={(loggedUser) => {
                 setUser(loggedUser);
-                setTransactions(getCachedTransactions());
+                setTxPayload(getCachedTransactions());
                 setFixedExpenses(getCachedFixedExpenses());
                 setCategories(getCachedCategories());
                 setOfflineQueue(getOfflineQueue());
@@ -390,7 +511,7 @@ export default function App() {
             {isOnline && offlineQueue.length > 0 && (
               <button
                 type="button"
-                onClick={loadDashboardData}
+                onClick={() => loadDashboardData()}
                 className="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded-lg text-xs font-bold transition"
               >
                 Sincronizar ahora
@@ -417,7 +538,7 @@ export default function App() {
             }`}
           >
             <LayoutList className="w-4 h-4" />
-            <span>Movimientos ({combinedTransactions.length})</span>
+            <span>Movimientos ({totalCount + offlineQueue.length})</span>
           </button>
 
           <button
@@ -447,26 +568,118 @@ export default function App() {
           </button>
         </div>
 
-        {/* PANTALLA 1: Resumen de Balance + Historial de Movimientos */}
+        {/* PANTALLA 1: Resumen de Balance + Historial de Movimientos Paginado y Filtrado */}
         {activeTab === "transactions" && (
           <div className="space-y-6">
             <BalanceSummary
-              transactions={combinedTransactions}
+              summary={txPayload?.summary}
+              offlineQueue={offlineQueue}
               fixedExpenses={fixedExpenses}
             />
 
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-bold text-gray-800">
-                  Historial de Transacciones
-                </h2>
-                <button
-                  onClick={loadDashboardData}
-                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-xl text-xs font-medium transition duration-200 inline-flex items-center gap-1.5"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Actualizar</span>
-                </button>
+            <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-gray-100">
+              <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-800">
+                    Historial de Transacciones
+                  </h2>
+                  <p className="text-xs text-gray-400 mt-0.5 inline-flex items-center gap-1">
+                    <Calendar className="w-3 h-3" />
+                    <span>
+                      Del {isoToDdMmYyyy(filterDateFrom)} al{" "}
+                      {isoToDdMmYyyy(filterDateTo)}
+                      {filterCategory ? ` · Categoría: ${filterCategory}` : ""}
+                    </span>
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {hasCustomFilters && (
+                    <button
+                      type="button"
+                      onClick={handleResetFilters}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-3 py-1.5 rounded-xl text-xs font-medium transition duration-200 inline-flex items-center gap-1.5"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Mes actual</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => loadDashboardData()}
+                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-xl text-xs font-medium transition duration-200 inline-flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Actualizar</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Barra de Filtros: Categoría, Desde (dd/mm/yyyy), Hasta (dd/mm/yyyy) */}
+              <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-100 mb-5">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 mb-2.5">
+                  <Filter className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Filtrar movimientos</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                      Categoría
+                    </label>
+                    <select
+                      value={filterCategory}
+                      onChange={(e) => {
+                        setFilterCategory(e.target.value);
+                        setPage(1);
+                      }}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-xs bg-white"
+                    >
+                      <option value="">Todas las categorías</option>
+                      {categories.map((cat) => (
+                        <option key={cat.id || cat.name} value={cat.name}>
+                          {cat.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                      Desde ({isoToDdMmYyyy(filterDateFrom)})
+                    </label>
+                    <input
+                      type="date"
+                      value={filterDateFrom}
+                      max={filterDateTo || undefined}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setFilterDateFrom(e.target.value);
+                          setPage(1);
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-xs bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                      Hasta ({isoToDdMmYyyy(filterDateTo)})
+                    </label>
+                    <input
+                      type="date"
+                      value={filterDateTo}
+                      min={filterDateFrom || undefined}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setFilterDateTo(e.target.value);
+                          setPage(1);
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base sm:text-xs bg-white"
+                    />
+                  </div>
+                </div>
               </div>
 
               {loading && (
@@ -481,191 +694,250 @@ export default function App() {
                 </div>
               )}
 
-              {!loading && !error && combinedTransactions.length === 0 && (
+              {!loading && !error && visibleTransactions.length === 0 && (
                 <div className="text-center py-8">
                   <p className="text-sm text-gray-400">
-                    No hay transacciones registradas aún.
+                    No se encontraron transacciones en este rango o categoría.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("new")}
-                    className="mt-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Registrar primera transacción</span>
-                  </button>
+                  <div className="flex justify-center gap-2 mt-3">
+                    {hasCustomFilters && (
+                      <button
+                        type="button"
+                        onClick={handleResetFilters}
+                        className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Limpiar filtros</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("new")}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Registrar transacción</span>
+                    </button>
+                  </div>
                 </div>
               )}
 
-              {combinedTransactions.length > 0 && (
-                <div className="divide-y divide-gray-100">
-                  {combinedTransactions.map((tx) => {
-                    const isEditing = editingTxId === tx.id;
-                    const isBusy = txActionLoadingId === tx.id;
+              {!loading && visibleTransactions.length > 0 && (
+                <>
+                  <div className="divide-y divide-gray-100">
+                    {visibleTransactions.map((tx) => {
+                      const isEditing = editingTxId === tx.id;
+                      const isBusy = txActionLoadingId === tx.id;
 
-                    if (isEditing) {
-                      return (
-                        <div key={tx.id} className="py-4 space-y-3">
-                          <div className="grid grid-cols-2 gap-2">
-                            <select
-                              value={editTxForm.type}
-                              onChange={(e) =>
-                                setEditTxForm({
-                                  ...editTxForm,
-                                  type: e.target.value,
-                                })
-                              }
-                              className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm bg-white"
-                            >
-                              <option value="expense">Gasto</option>
-                              <option value="income">Ingreso</option>
-                            </select>
-                            <input
-                              type="number"
-                              step="0.01"
-                              inputMode="decimal"
-                              value={editTxForm.amount}
-                              onChange={(e) =>
-                                setEditTxForm({
-                                  ...editTxForm,
-                                  amount: e.target.value,
-                                })
-                              }
-                              className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm"
-                              placeholder="Monto"
-                            />
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <input
-                              type="text"
-                              value={editTxForm.description}
-                              onChange={(e) =>
-                                setEditTxForm({
-                                  ...editTxForm,
-                                  description: e.target.value,
-                                })
-                              }
-                              className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm"
-                              placeholder="Descripción"
-                            />
-                            <select
-                              value={editTxForm.category}
-                              onChange={(e) =>
-                                setEditTxForm({
-                                  ...editTxForm,
-                                  category: e.target.value,
-                                })
-                              }
-                              className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm bg-white"
-                            >
-                              {getEditCategoryOptions(editTxForm.category).map(
-                                (cat) => (
+                      if (isEditing) {
+                        return (
+                          <div key={tx.id} className="py-4 space-y-3">
+                            <div className="grid grid-cols-2 gap-2">
+                              <select
+                                value={editTxForm.type}
+                                onChange={(e) =>
+                                  setEditTxForm({
+                                    ...editTxForm,
+                                    type: e.target.value,
+                                  })
+                                }
+                                className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm bg-white"
+                              >
+                                <option value="expense">Gasto</option>
+                                <option value="income">Ingreso</option>
+                              </select>
+                              <input
+                                type="number"
+                                step="0.01"
+                                inputMode="decimal"
+                                value={editTxForm.amount}
+                                onChange={(e) =>
+                                  setEditTxForm({
+                                    ...editTxForm,
+                                    amount: e.target.value,
+                                  })
+                                }
+                                className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm"
+                                placeholder="Monto"
+                              />
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <input
+                                type="text"
+                                value={editTxForm.description}
+                                onChange={(e) =>
+                                  setEditTxForm({
+                                    ...editTxForm,
+                                    description: e.target.value,
+                                  })
+                                }
+                                className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm"
+                                placeholder="Descripción"
+                              />
+                              <select
+                                value={editTxForm.category}
+                                onChange={(e) =>
+                                  setEditTxForm({
+                                    ...editTxForm,
+                                    category: e.target.value,
+                                  })
+                                }
+                                className="px-3 py-2 border border-gray-200 rounded-lg text-base sm:text-sm bg-white"
+                              >
+                                {getEditCategoryOptions(
+                                  editTxForm.category
+                                ).map((cat) => (
                                   <option
                                     key={cat.id || cat.name}
                                     value={cat.name}
                                   >
                                     {cat.name}
                                   </option>
-                                )
-                              )}
-                            </select>
-                          </div>
-                          <div className="flex justify-end gap-2">
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => handleSaveTxEdit(tx.id)}
-                              className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium"
-                            >
-                              Guardar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setEditingTxId(null)}
-                              className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg text-xs font-medium"
-                            >
-                              Cancelar
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div
-                        key={tx.id}
-                        className="py-3.5 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 text-sm"
-                      >
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-semibold text-gray-800">
-                              {tx.description || "Sin descripción"}
-                            </p>
-                            {tx.is_offline_pending && (
-                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 inline-flex items-center gap-1">
-                                <CloudOff className="w-3 h-3" />
-                                <span>Pendiente de sincronizar</span>
-                              </span>
-                            )}
-                            {(tx.fixed_expense_id || tx.billing_period) && (
-                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 inline-flex items-center gap-1">
-                                <Zap className="w-3 h-3" />
-                                <span>Cargo fijo automático</span>
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
-                              <Tag className="w-3 h-3" />
-                              <span>{tx.category || "General"}</span>
-                            </span>
-                            {tx.date && (
-                              <span className="text-xs text-gray-400">
-                                {formatDate(tx.date)}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between sm:justify-end gap-3">
-                          <span
-                            className={`font-bold ${
-                              tx.type === "income"
-                                ? "text-emerald-600"
-                                : "text-rose-600"
-                            }`}
-                          >
-                            {tx.type === "income" ? "+" : "-"}$
-                            {Number(tx.amount).toFixed(2)}
-                          </span>
-
-                          <div className="flex items-center gap-1.5">
-                            {!tx.is_offline_pending && isOnline && (
+                                ))}
+                              </select>
+                            </div>
+                            <div className="flex justify-end gap-2">
                               <button
                                 type="button"
                                 disabled={isBusy}
-                                onClick={() => startEditingTx(tx)}
-                                className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                                onClick={() => handleSaveTxEdit(tx.id)}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium"
                               >
-                                <Pencil className="w-3.5 h-3.5" />
-                                <span>Editar</span>
+                                Guardar
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => handleDeleteTx(tx)}
-                              className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                              <button
+                                type="button"
+                                onClick={() => setEditingTxId(null)}
+                                className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg text-xs font-medium"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div
+                          key={tx.id}
+                          className="py-3.5 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 text-sm"
+                        >
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-semibold text-gray-800">
+                                {tx.description || "Sin descripción"}
+                              </p>
+                              {tx.is_offline_pending && (
+                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 inline-flex items-center gap-1">
+                                  <CloudOff className="w-3 h-3" />
+                                  <span>Pendiente de sincronizar</span>
+                                </span>
+                              )}
+                              {(tx.fixed_expense_id || tx.billing_period) && (
+                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 inline-flex items-center gap-1">
+                                  <Zap className="w-3 h-3" />
+                                  <span>Cargo fijo automático</span>
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                                <Tag className="w-3 h-3" />
+                                <span>{tx.category || "General"}</span>
+                              </span>
+                              {tx.date && (
+                                <span className="text-xs text-gray-400">
+                                  {formatDate(tx.date)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between sm:justify-end gap-3">
+                            <span
+                              className={`font-bold ${
+                                tx.type === "income"
+                                  ? "text-emerald-600"
+                                  : "text-rose-600"
+                              }`}
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Eliminar</span>
-                            </button>
+                              {tx.type === "income" ? "+" : "-"}$
+                              {Number(tx.amount).toFixed(2)}
+                            </span>
+
+                            <div className="flex items-center gap-1.5">
+                              {!tx.is_offline_pending && isOnline && (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => startEditingTx(tx)}
+                                  className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                  <span>Editar</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => handleDeleteTx(tx)}
+                                className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Eliminar</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Controles de Paginación (Backend) */}
+                  <div className="mt-5 pt-4 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-500">
+                    <span>
+                      Mostrando{" "}
+                      <strong>
+                        {totalCount === 0
+                          ? 0
+                          : (currentPage - 1) * PAGE_SIZE + 1}
+                      </strong>{" "}
+                      a{" "}
+                      <strong>
+                        {Math.min(currentPage * PAGE_SIZE, totalCount)}
+                      </strong>{" "}
+                      de <strong>{totalCount}</strong> movimientos
+                    </span>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={currentPage <= 1 || loading}
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        className="px-3 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-medium inline-flex items-center gap-1 disabled:opacity-40 disabled:pointer-events-none transition"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                        <span>Anterior</span>
+                      </button>
+
+                      <span className="px-2.5 py-1 font-semibold text-gray-700">
+                        Página {currentPage} de {totalPages}
+                      </span>
+
+                      <button
+                        type="button"
+                        disabled={currentPage >= totalPages || loading}
+                        onClick={() =>
+                          setPage((p) => Math.min(totalPages, p + 1))
+                        }
+                        className="px-3 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-medium inline-flex items-center gap-1 disabled:opacity-40 disabled:pointer-events-none transition"
+                      >
+                        <span>Siguiente</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -684,7 +956,8 @@ export default function App() {
                   "Guardado en el dispositivo (se sincronizará al tener internet)."
                 );
               } else {
-                await loadDashboardData();
+                setPage(1);
+                await loadDashboardData(1);
                 setActiveTab("transactions");
                 showTempFeedback("Transacción registrada exitosamente.");
               }
@@ -697,7 +970,7 @@ export default function App() {
           <FixedExpensesSection
             fixedExpenses={fixedExpenses}
             categories={categories}
-            onChanged={loadDashboardData}
+            onChanged={() => loadDashboardData()}
             onTransactionRecorded={async () => {
               await loadDashboardData();
               showTempFeedback(

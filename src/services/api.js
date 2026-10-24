@@ -41,20 +41,49 @@ const getUserCacheSuffix = () => {
   return user?.id || user?.username || "default";
 };
 
+const EMPTY_TX_PAYLOAD = {
+  items: [],
+  total: 0,
+  page: 1,
+  page_size: 10,
+  total_pages: 1,
+  summary: {
+    total_income: 0,
+    total_expense: 0,
+    net_balance: 0,
+    income_count: 0,
+    expense_count: 0,
+  },
+};
+
 export const getCachedTransactions = () => {
   try {
     const raw = localStorage.getItem(`pwa_cache_tx_${getUserCacheSuffix()}`);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return EMPTY_TX_PAYLOAD;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return {
+        ...EMPTY_TX_PAYLOAD,
+        items: parsed,
+        total: parsed.length,
+      };
+    }
+    return {
+      ...EMPTY_TX_PAYLOAD,
+      ...parsed,
+      items: Array.isArray(parsed.items) ? parsed.items : [],
+      summary: { ...EMPTY_TX_PAYLOAD.summary, ...(parsed.summary || {}) },
+    };
   } catch {
-    return [];
+    return EMPTY_TX_PAYLOAD;
   }
 };
 
-export const setCachedTransactions = (list) => {
+export const setCachedTransactions = (payload) => {
   try {
     localStorage.setItem(
       `pwa_cache_tx_${getUserCacheSuffix()}`,
-      JSON.stringify(list || [])
+      JSON.stringify(payload || EMPTY_TX_PAYLOAD)
     );
   } catch {
     // Ignore storage quota errors
